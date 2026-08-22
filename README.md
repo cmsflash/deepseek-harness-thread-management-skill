@@ -1,14 +1,20 @@
 # deepseek-harness-thread-management
 
-An agent skill for finding and counting [DeepSeek Harness](https://github.com/deepseek-ai) (DSH)
+An agent skill for finding, counting, and waiting on [DeepSeek Harness](https://github.com/deepseek-ai) (DSH)
 sessions by lifecycle state: active, archived, or orphaned.
 
-DSH exposes no model-facing tool that enumerates sessions, so counting means
-reading DSH's own state. The key correction this skill encodes: count from the
-**workspace registry** (`$DSH_HOME/storages/workspace.json`), not from the
-`$DSH_HOME/sessions/` directory. Session logs on disk outnumber active sessions
-by roughly 4x, because subagent children each write a log without being filed
-into a workspace.
+DSH exposes no model-facing tool that enumerates sessions or notifies an agent
+about sibling threads, so both capabilities come from reading DSH's own state
+and event stream:
+
+- **Counting** reads the workspace registry
+  (`$DSH_HOME/storages/workspace.json`), not the `$DSH_HOME/sessions/`
+  directory — session logs on disk outnumber active sessions by roughly 4x,
+  because subagent children each write a log without being filed into a
+  workspace.
+- **Waiting** watches the GUI's own WebSocket event stream (`/api/events.mux`)
+  for a target session's `turn/end`, run as a background job so job settlement
+  becomes the agent's notification. No polling.
 
 ## Usage
 
@@ -16,9 +22,14 @@ into a workspace.
 ./count-active-sessions.py            # human-readable table
 ./count-active-sessions.py --json     # machine-readable
 ./count-active-sessions.py --dsh-home /path/to/.dsh
+
+./wait-for-turn-end.mjs --session session-xxxx [--timeout-min 30]
 ```
 
-Requires Python 3.9+. No third-party dependencies.
+`count-active-sessions.py` requires Python 3.9+. `wait-for-turn-end.mjs`
+requires Node and resolves its `ws` dependency from the deepseek-harness
+checkout (`DSH_ROOT` env overrides; defaults to
+`/Users/zhuoran/Programs/deepseek-harness`). No other dependencies.
 
 ## Install as a skill
 
@@ -34,5 +45,6 @@ ln -s ~/Programs/deepseek-harness-thread-management ~/.agents/skills/deepseek-ha
 
 | File | Purpose |
 |---|---|
-| `SKILL.md` | Agent instructions: the formula, the three populations, the traps |
-| `count-active-sessions.py` | The counting script |
+| `SKILL.md` | Agent instructions: counting, waiting, the traps |
+| `count-active-sessions.py` | Session counting from the workspace registry |
+| `wait-for-turn-end.mjs` | Background watcher for another thread's turn end |
