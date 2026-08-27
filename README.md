@@ -1,55 +1,72 @@
 # deepseek-harness-thread-management
 
-An agent skill for finding, counting, and waiting on [DeepSeek Harness](https://github.com/deepseek-ai) (DSH)
-sessions by lifecycle state: active, archived, or orphaned.
+An agent skill for working with [DeepSeek Harness](https://github.com/deepseek-ai)
+(DSH) threads other than the one you are in: reading them, prompting them,
+controlling them, counting them, and waiting on them.
 
-DSH exposes no model-facing tool that enumerates sessions, reads sibling
-threads, or notifies an agent about them, so all of these capabilities come
-from reading DSH's own state and speaking the host's local RPC API:
+DSH exposes no model-facing tool that enumerates sessions, reads sibling threads,
+acts on them, or notifies an agent about them. Every capability here therefore
+comes from outside the harness — the host's local RPC API (the same
+unauthenticated loopback surface the browser GUI uses) and DSH's own state files.
 
+- **Reading** fetches another thread's last human prompt and final reply through
+  `session.history`, small tail window first — intermediate turns and tool
+  traffic are almost never what the question needs.
+- **Prompting** sends any message — not just "continue" — through
+  `session.prompt`, in `queue` or `steer` mode.
+- **Controlling** covers the write surface: create, fork, rename, archive,
+  cancel, queued-message edit/remove, remote slash commands (including
+  `/permission`), answering pending approvals and questions, and subagent
+  children over HTTP.
 - **Counting** reads the workspace registry
   (`$DSH_HOME/storages/workspace.json`), not the `$DSH_HOME/sessions/`
-  directory — session logs on disk outnumber active sessions by roughly 4x,
-  because subagent children each write a log without being filed into a
-  workspace.
-- **Reading** fetches another thread's last human prompt and final reply
-  through `session.history`, small tail window first — intermediate turns and
-  tool traffic are almost never what the question needs.
-- **Prompting** sends any message — not just "continue" — to another thread
-  through `session.prompt`, under a propose-then-send policy: an injected
-  prompt is indistinguishable from the owner typing, so the human approves
-  the draft first.
+  directory — logs on disk outnumber active sessions by roughly 4x, because
+  subagent children each write a log without being filed into a workspace.
 - **Waiting** watches the GUI's own WebSocket event stream (`/api/events.mux`)
   for a target session's `turn/end`, run as a background job so job settlement
   becomes the agent's notification. No polling.
 
+Every write is indistinguishable from the owner's own input in the target's
+durable log, so the skill puts all of them behind a propose-then-act rule: the
+human approves the exact content first. Answering another thread's pending
+approval or question needs an explicit instruction for that specific request.
+
+Every recipe was validated against live threads — scratch sessions armed with
+`/permission read-only` plus a file-write request, then answered through the
+bundled script.
+
 ## Usage
 
 ```sh
-./count-active-sessions.py            # human-readable table
-./count-active-sessions.py --json     # machine-readable
-./count-active-sessions.py --dsh-home /path/to/.dsh
+scripts/count-active-sessions.py            # human-readable table
+scripts/count-active-sessions.py --json     # machine-readable
+scripts/count-active-sessions.py --dsh-home /path/to/.dsh
 
-./read-last-reply.py --session session-xxxx   # last prompt + final reply of another thread
+scripts/read-last-reply.py --session session-xxxx    # last prompt + final reply
 
-./wait-for-turn-end.mjs --session session-xxxx [--timeout-min 30]
+scripts/wait-for-turn-end.mjs --session session-xxxx [--timeout-min 30]
+
+scripts/respond.mjs <sessionId>                      # list pending approvals/questions
+scripts/respond.mjs <sessionId> --approve <approvalId> [allowed-once|rejected]
+scripts/respond.mjs <sessionId> --answer '[{"id":"color","selected":["Red"]}]'
 ```
 
-Sending a message to another thread is one documented RPC
-(`POST /api/session.prompt`, mode `queue` or `steer`) — see SKILL.md for the
-propose-then-send policy and provenance rules.
+Everything else is one documented `curl` per action — see `SKILL.md` for the wire
+envelope, discovery, reading, and prompting, and
+`references/control-actions.md` for the control surface.
 
-`count-active-sessions.py` requires Python 3.9+. `wait-for-turn-end.mjs`
-requires Node and resolves its `ws` dependency from the deepseek-harness
-checkout (`DSH_ROOT` env overrides; defaults to
-`/Users/zhuoran/Programs/deepseek-harness`). No other dependencies.
+`count-active-sessions.py` requires Python 3.9+. The `.mjs` scripts require Node
+and resolve their `ws` dependency from the deepseek-harness checkout (`DSH_ROOT`
+env overrides; defaults to `/Users/zhuoran/Programs/deepseek-harness`). No other
+dependencies.
 
-## Install as a skill
+## Install
 
-Symlink it into the centralized skills directory:
+Symlinked into the central skill store:
 
 ```sh
-ln -s ~/Programs/deepseek-harness-thread-management ~/.agents/skills/deepseek-harness-thread-management
+ln -s ~/Programs/skills/deepseek-harness-thread-management-skill ~/.agents/skills/deepseek-harness-thread-management
+ln -s ~/.agents/skills/deepseek-harness-thread-management ~/.claude/skills/deepseek-harness-thread-management
 ```
 
 `SKILL.md` carries the agent-facing instructions.
@@ -58,7 +75,10 @@ ln -s ~/Programs/deepseek-harness-thread-management ~/.agents/skills/deepseek-ha
 
 | File | Purpose |
 |---|---|
-| `SKILL.md` | Agent instructions: counting, reading, prompting, waiting, the traps |
-| `count-active-sessions.py` | Session counting from the workspace registry |
-| `read-last-reply.py` | Read another thread's last prompt and final reply |
-| `wait-for-turn-end.mjs` | Background watcher for another thread's turn end |
+| `SKILL.md` | Agent instructions: the API, standing rules, finding, reading, prompting, waiting |
+| `references/control-actions.md` | The write surface: lifecycle, cancel, queue, slash commands, approvals, subagents |
+| `references/counting.md` | The registry counting method, the three populations, the traps |
+| `scripts/count-active-sessions.py` | Session counting from the workspace registry |
+| `scripts/read-last-reply.py` | Read another thread's last prompt and final reply |
+| `scripts/wait-for-turn-end.mjs` | Background watcher for another thread's turn end |
+| `scripts/respond.mjs` | List and answer a thread's pending approvals and questions |
