@@ -18,6 +18,10 @@ unauthenticated loopback surface the browser GUI uses) and DSH's own state files
   cancel, queued-message edit/remove, remote slash commands (including
   `/permission`), answering pending approvals and questions, and subagent
   children over HTTP.
+- **Recovering** gets an archived thread back. DSH archives one-way — no
+  unarchive API, no archived-session view, and no session deletion anywhere —
+  so the skill supplies both inverses: a live fork copy, or a true unarchive by
+  editing the archive set with DSH stopped.
 - **Counting** reads the workspace registry
   (`$DSH_HOME/storages/workspace.json`), not the `$DSH_HOME/sessions/`
   directory — logs on disk outnumber active sessions by roughly 4x, because
@@ -49,7 +53,16 @@ scripts/wait-for-turn-end.mjs --session session-xxxx [--timeout-min 30]
 scripts/respond.mjs <sessionId>                      # list pending approvals/questions
 scripts/respond.mjs <sessionId> --approve <approvalId> [allowed-once|rejected]
 scripts/respond.mjs <sessionId> --answer '[{"id":"color","selected":["Red"]}]'
+
+scripts/unarchive.py list                    # archived threads: title, date, turns
+scripts/unarchive.py fork <id> --commit      # live copy under a new id, no restart
+scripts/unarchive.py restore <id> --commit   # true unarchive; DSH must be stopped
+scripts/unarchive.py restore --all --commit  # bulk restore
 ```
+
+`unarchive.py` writes only with `--commit`, and `restore` refuses outright while
+DSH is answering, because the registry owns `workspace.json` in memory and
+republishes it wholesale — a live edit is silently reverted.
 
 Everything else is one documented `curl` per action — see `SKILL.md` for the wire
 envelope, discovery, reading, and prompting, and
@@ -78,7 +91,10 @@ ln -s ~/.agents/skills/deepseek-harness-thread-management ~/.claude/skills/deeps
 | `SKILL.md` | Agent instructions: the API, standing rules, finding, reading, prompting, waiting |
 | `references/control-actions.md` | The write surface: lifecycle, cancel, queue, slash commands, approvals, subagents |
 | `references/counting.md` | The registry counting method, the three populations, the traps |
+| `references/unarchive.md` | Recovering an archived thread: the two recipes and their tradeoffs |
+| `references/unarchive-discussion-draft.md` | Unposted upstream Ideas discussion on the missing unarchive |
 | `scripts/count-active-sessions.py` | Session counting from the workspace registry |
 | `scripts/read-last-reply.py` | Read another thread's last prompt and final reply |
 | `scripts/wait-for-turn-end.mjs` | Background watcher for another thread's turn end |
 | `scripts/respond.mjs` | List and answer a thread's pending approvals and questions |
+| `scripts/unarchive.py` | List archived threads; recover one by fork or true unarchive |

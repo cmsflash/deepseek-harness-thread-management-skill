@@ -16,13 +16,18 @@ curl -s -X POST $API/session.create -H 'Content-Type: application/json' -d '{"ty
 curl -s -X POST $API/session.fork   -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"c2","method":"session.fork","payload":{"sessionId":"<src>"}}'
 # rename (pins the title against regeneration)
 curl -s -X POST $API/session.rename -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"c3","method":"session.rename","payload":{"sessionId":"<id>","title":"New title"}}'
-# archive: display-level and reversible in principle; keeps the log and workspace slot.
-# No unarchive API exists yet.
+# archive: display-level; keeps the log and the workspace slot. One-way over the
+# API — there is no unarchive method. See references/unarchive.md to get one back.
 curl -s -X POST $API/workspace.archiveSession -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"c4","method":"workspace.archiveSession","payload":{"sessionId":"<id>"}}'
 ```
 
 `workspaceId` must be the full UUID from `workspace.list` — a truncated id
 returns `workspace-not-found` and looks like the workspace vanished.
+
+There is no session deletion anywhere in DSH — no RPC, no CLI, no registry
+method. Session logs are append-only and permanent. (`session-query-sqlite`'s
+`_deleteSession` removes search-index rows, not logs.) Archiving is the only
+"remove from view" operation, which is why unarchiving matters.
 
 ## Cancel
 

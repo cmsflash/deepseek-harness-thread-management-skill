@@ -1,6 +1,6 @@
 ---
 name: deepseek-harness-thread-management
-description: "Read, prompt, control, count, and wait on DeepSeek Harness (DSH) threads other than this one, via the host's loopback RPC API and state files: what a thread said, sending it a message, cancelling / steering / renaming / forking / archiving it, running a slash command in it, answering its pending approval or question, counting sessions by lifecycle state, and blocking until its turn ends. Use when asked about another DSH thread, how many threads or sessions exist, why the sidebar count differs from disk, or to act on a thread from outside it. Triggers: 'how many sessions', 'active sessions', 'archived sessions', 'what did that thread say', 'send a message to that thread', 'tell it to', 'wait for that thread', 'cancel that thread', 'stop the other agent', 'steer it', 'rename the thread', 'fork this conversation', 'approve its request', 'run /plan in that thread'."
+description: "Read, prompt, control, count, recover, and wait on DeepSeek Harness (DSH) threads other than this one, via the host's loopback RPC API and state files: what a thread said, sending it a message, cancelling / steering / renaming / forking / archiving it, un-archiving or restoring an archived thread, running a slash command in it, answering its pending approval or question, counting sessions by lifecycle state, and blocking until its turn ends. Use when asked about another DSH thread, how many threads or sessions exist, why the sidebar count differs from disk, how to get an archived or lost thread back, or to act on a thread from outside it. Triggers: 'how many sessions', 'active sessions', 'archived sessions', 'unarchive', 'un-archive a thread', 'restore an archived thread', 'I lost a thread', 'get that thread back', 'what did that thread say', 'send a message to that thread', 'tell it to', 'wait for that thread', 'cancel that thread', 'stop the other agent', 'steer it', 'rename the thread', 'fork this conversation', 'approve its request', 'run /plan in that thread'."
 ---
 
 # DSH thread management: reading, prompting, controlling, counting, waiting
@@ -127,6 +127,32 @@ otherwise; it is wrong). Commands run through `commands/execute`; see
 After sending, compose with waiting: check `running`, arm the watcher as a
 background job, read the new reply when it fires.
 
+## Recovering an archived thread
+
+Archiving is one-way over the API: `workspace.archiveSession` has no inverse,
+and archived threads have no viewing surface. It is a visibility flag, so
+nothing is lost — the log and the workspace slot both survive. There is also no
+session deletion anywhere in DSH, so archive is the only "remove from view"
+verb.
+
+```sh
+scripts/unarchive.py list                  # archived threads: title, date, turns
+scripts/unarchive.py fork <id> --commit    # live copy, new id, no restart
+scripts/unarchive.py restore <id> --commit # true unarchive; DSH must be STOPPED
+```
+
+Two recipes, and the choice is about identity versus uptime. **Fork** works on
+a live server: the copy gets a fresh id absent from the archive set, so it is
+visible at once while the original stays archived — but it is durably a fork
+(new id, `parentSession` lineage) and drops an unfinished final turn.
+**Restore** removes the id from `archivedSessionIds` for a true unarchive —
+same id, same position — but the registry owns `workspace.json` in memory and
+republishes it wholesale, so a live edit is silently reverted; the script
+refuses while DSH answers, even with `--commit`.
+
+Both writes are dry-run by default. `references/unarchive.md` has the full
+comparison and the reasoning behind the restart rule.
+
 ## Waiting on another thread
 
 DSH has no cross-thread notification for agents — the subagent lifecycle emitter
@@ -181,7 +207,7 @@ Load `references/control-actions.md` for the wire recipes. It covers:
 
 | Area | Methods |
 |---|---|
-| Lifecycle | `session.create`, `session.fork`, `session.rename`, `workspace.archiveSession` |
+| Lifecycle | `session.create`, `session.fork`, `session.rename`, `workspace.archiveSession` (one-way — `references/unarchive.md` to undo) |
 | Interruption | `session.cancel` |
 | Transient queue | `session.updateQueue` — edit / remove / promote-to-steer a pending message |
 | Slash commands | `commands/execute`, notably `/permission <preset>` |
