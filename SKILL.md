@@ -138,17 +138,20 @@ verb.
 ```sh
 scripts/unarchive.py list                  # archived threads: title, date, turns
 scripts/unarchive.py fork <id> --commit    # live copy, new id, no restart
+scripts/unarchive.py archive <id> --commit # undo: re-hide an unwanted fork
 scripts/unarchive.py restore <id> --commit # true unarchive; DSH must be STOPPED
 ```
 
 Two recipes, and the choice is about identity versus uptime. **Fork** works on
 a live server: the copy gets a fresh id absent from the archive set, so it is
 visible at once while the original stays archived — but it is durably a fork
-(new id, `parentSession` lineage) and drops an unfinished final turn.
-**Restore** removes the id from `archivedSessionIds` for a true unarchive —
-same id, same position — but the registry owns `workspace.json` in memory and
-republishes it wholesale, so a live edit is silently reverted; the script
-refuses while DSH answers, even with `--commit`.
+(new id, `parentSession` lineage), drops an unfinished final turn, and does not
+carry subagent children (their tool calls stay in the transcript; the child
+sessions stay with the original). **Restore** removes the id from
+`archivedSessionIds` for a true unarchive — same id, same position — but the
+registry owns `workspace.json` in memory and republishes it wholesale, so a live
+edit is silently reverted; the script refuses while DSH answers, even with
+`--commit`.
 
 Both writes are dry-run by default. `references/unarchive.md` has the full
 comparison and the reasoning behind the restart rule.

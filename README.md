@@ -56,6 +56,7 @@ scripts/respond.mjs <sessionId> --answer '[{"id":"color","selected":["Red"]}]'
 
 scripts/unarchive.py list                    # archived threads: title, date, turns
 scripts/unarchive.py fork <id> --commit      # live copy under a new id, no restart
+scripts/unarchive.py archive <id> --commit   # undo: re-hide an unwanted fork
 scripts/unarchive.py restore <id> --commit   # true unarchive; DSH must be stopped
 scripts/unarchive.py restore --all --commit  # bulk restore
 ```

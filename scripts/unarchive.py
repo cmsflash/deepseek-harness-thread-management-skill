@@ -3,6 +3,7 @@
 
     list                      archived threads with title, date, turn count
     fork <id>                 live copy under a new id (no restart; --commit to write)
+    archive <id>              archive a session; the undo for an unwanted fork
     restore <id> [<id> ...]   true unarchive, same id (DSH must be STOPPED; --commit)
     restore --all             restore every archived id
 
@@ -124,6 +125,13 @@ def cmd_list(args) -> int:
     return 0
 
 
+def subagent_children(index: dict[str, dict], session_id: str) -> list[str]:
+    return [
+        item["sessionId"] for item in index.values()
+        if item.get("parentSessionId") == session_id and item.get("origin") == "subagent"
+    ]
+
+
 def cmd_fork(args) -> int:
     session_id = args.session_id
     archived = archived_ids(dsh_home())
@@ -135,10 +143,20 @@ def cmd_fork(args) -> int:
     if session_id not in index:
         raise SystemExit(f"{session_id} has no session log — unrecoverable.")
 
+    children = subagent_children(index, session_id)
+
     print(f"Fork source : {title}  ({stamp}, {turns} turns)")
     print(f"              {session_id}")
     print("Creates a NEW visible thread; the original stays archived.")
     print("New id, records parentSession lineage, drops any unfinished final turn.")
+    if children:
+        print(
+            f"NOTE: {len(children)} subagent child session(s) do NOT transfer. The parent's\n"
+            "      subagent tool calls and results stay in the transcript, but the child\n"
+            "      sessions keep pointing at the original and are unreachable from the fork."
+        )
+    if args.archive_original and session_id not in archived:
+        print("NOTE: --archive-original is a no-op here; the source is not archived.")
     if not args.commit:
         print("\nDRY RUN — re-run with --commit to fork.")
         return 0
@@ -146,16 +164,26 @@ def cmd_fork(args) -> int:
     value = rpc(args.base_url, "session.fork", {"sessionId": session_id})
     new_id = value["sessionId"]
     print(f"\nForked -> {new_id}")
-    print("Visible in the sidebar now. To undo, archive it:")
-    print(
-        f"  curl -s -X POST {args.base_url}/api/workspace.archiveSession"
-        " -H 'Content-Type: application/json' -d '"
-        + json.dumps({
-            "type": "client-request", "rpcId": "undo",
-            "method": "workspace.archiveSession", "payload": {"sessionId": new_id},
-        })
-        + "'"
-    )
+
+    if args.archive_original and session_id in archived:
+        print("Source already archived; nothing to do (--archive-original).")
+
+    print("Visible in the sidebar now. To undo, archive the fork:")
+    print(f"  {sys.argv[0]} archive {new_id} --commit")
+    return 0
+
+
+def cmd_archive(args) -> int:
+    """Archive a session — the undo for an unwanted fork."""
+    index = session_index(args.base_url)
+    stamp, turns, title = describe(index.get(args.session_id))
+    print(f"Archive: {title}  ({stamp}, {turns} turns)")
+    print(f"         {args.session_id}")
+    if not args.commit:
+        print("\nDRY RUN — re-run with --commit to archive.")
+        return 0
+    rpc(args.base_url, "workspace.archiveSession", {"sessionId": args.session_id})
+    print("\nArchived (hidden from every surface; the log is untouched).")
     return 0
 
 
@@ -230,7 +258,15 @@ def main() -> int:
     fork = sub.add_parser("fork", help="live copy under a new id (no restart)")
     fork.add_argument("session_id")
     fork.add_argument("--commit", action="store_true", help="actually fork")
+    fork.add_argument(
+        "--archive-original", action="store_true",
+        help="ensure the source stays archived (already true for an archived source)")
     fork.set_defaults(func=cmd_fork)
+
+    archive = sub.add_parser("archive", help="archive a session (undo an unwanted fork)")
+    archive.add_argument("session_id")
+    archive.add_argument("--commit", action="store_true", help="actually archive")
+    archive.set_defaults(func=cmd_archive)
 
     restore = sub.add_parser("restore", help="true unarchive; DSH must be stopped")
     restore.add_argument("session_ids", nargs="*")

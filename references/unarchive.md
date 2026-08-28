@@ -47,6 +47,7 @@ archived where it was. No deletion is needed — and none exists.
 ```sh
 scripts/unarchive.py list                  # archived threads: title, date, turns
 scripts/unarchive.py fork <session-id>     # add --commit to actually write
+scripts/unarchive.py archive <new-id>      # undo: re-hide an unwanted fork
 ```
 
 `session.fork` reads the source "using attached state or persistence inspection
@@ -56,6 +57,17 @@ What transfers: complete event history through the last completed turn, cwd,
 model target, `agentPreset`, and the source title. What does not: the session
 id, clean lineage (the child durably records `parentSession` and `seedLength`),
 and any unfinished final turn — the seed cuts at the last `turn/end`.
+
+**Subagent children do not transfer** (verified: a source with one child forked
+to zero). The parent's subagent tool calls and results stay in the transcript,
+so the record of what the children did survives; the child sessions keep
+pointing at the original id and are unreachable from the fork. `fork` warns when
+the source has children. To reach them, go back to the original — archived
+threads are hidden, not gone, and `subagent.list` still answers for them.
+
+A fork also consumes a workspace `sessionIds` slot, and the archived original
+keeps its own slot forever by design, so each rescue permanently adds an entry
+to a workspace that never shrinks. Fine for a few threads; use recipe B for bulk.
 
 Forking a source whose final turn is still open fails `fork-unavailable`. Since
 archived threads are almost always idle, this is rare; when it bites, use
