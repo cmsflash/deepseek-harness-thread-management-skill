@@ -6,8 +6,12 @@ controlling them, counting them, and waiting on them.
 
 DSH exposes no model-facing tool that enumerates sessions, reads sibling threads,
 acts on them, or notifies an agent about them. Every capability here therefore
-comes from outside the harness — the host's local RPC API (the same
-unauthenticated loopback surface the browser GUI uses) and DSH's own state files.
+comes from outside the harness — the host's authenticated local Remote RPC API
+(the same surface the browser GUI uses) and DSH's own state files.
+
+Use the [authenticated RPC client](references/rpc.md) for current HTTP and
+WebSocket access. It exchanges an operator-approved startup URL for a private
+session cookie without opening a browser or changing the server.
 
 - **Reading** fetches another thread's last human prompt and final reply through
   `session.history`, small tail window first — intermediate turns and tool
@@ -94,6 +98,9 @@ ln -s ~/.agents/skills/deepseek-harness-thread-management ~/.claude/skills/deeps
 | `references/counting.md` | The registry counting method, the three populations, the traps |
 | `references/unarchive.md` | Recovering an archived thread: the two recipes and their tradeoffs |
 | `references/unarchive-discussion-draft.md` | Unposted upstream Ideas discussion on the missing unarchive |
+| `references/rpc.md` | Authenticated local RPC, private cookies, and current wire protocol |
+| `scripts/rpc-client.mjs` | Shared authenticated HTTP and Remote-stream transport |
+| `scripts/rpc.mjs` | Login, unary calls, bounded stream observation, and liveness probing |
 | `scripts/count-active-sessions.py` | Session counting from the workspace registry |
 | `scripts/read-last-reply.py` | Read another thread's last prompt and final reply |
 | `scripts/wait-for-turn-end.mjs` | Background watcher for another thread's turn end |
