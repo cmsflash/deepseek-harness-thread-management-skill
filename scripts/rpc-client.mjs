@@ -224,6 +224,25 @@ export class RpcClient {
     return envelope.result.value
   }
 
+  async openDownload(path) {
+    const url = new URL(path, this.origin)
+    if (url.origin !== this.origin || !path.startsWith('/api/') || url.hash) {
+      throw new RpcError('BAD_PATH', 'Downloads must use an API path on the configured origin.')
+    }
+    const { cookie } = await this.readAuth()
+    let response
+    try {
+      response = await fetch(url, { headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(this.timeoutMs) })
+    } catch {
+      throw new RpcError('CONNECTION_FAILED', 'Could not open the authenticated API download.')
+    }
+    if (!response.ok) {
+      await response.body?.cancel()
+      throw new RpcError(response.status === 401 ? 'AUTH_REQUIRED' : 'HTTP_ERROR', `API download returned HTTP ${response.status}.`, response.status)
+    }
+    return response
+  }
+
   async probe() {
     try {
       const response = await fetch(this.origin, { method: 'HEAD', redirect: 'manual', signal: AbortSignal.timeout(this.timeoutMs) })
@@ -237,10 +256,11 @@ export class RpcClient {
     }
   }
 
-  async streamUntil(endpoint, args, accept, { timeoutMs = this.timeoutMs } = {}) {
+  async streamUntil(endpoint, args, accept, { timeoutMs = this.timeoutMs, signal } = {}) {
     endpointName(endpoint)
     if (!Number.isFinite(timeoutMs) || timeoutMs <= 0) throw new RpcError('BAD_TIMEOUT', 'Timeout must be positive.')
     const { cookie } = await this.readAuth()
+    if (signal?.aborted) throw new RpcError('ABORTED', 'Remote stream observation cancelled.')
     const { WebSocket } = webSocketLibrary()
     const streamId = randomUUID()
     return new Promise((resolve, reject) => {
@@ -252,26 +272,30 @@ export class RpcClient {
         if (settled) return
         settled = true
         clearTimeout(timer)
+        signal?.removeEventListener('abort', aborted)
         if (socket.readyState === WebSocket.CONNECTING) socket.terminate()
         else socket.close()
         if (error) reject(error)
         else resolve(value)
       }
+      const aborted = () => finish(new RpcError('ABORTED', 'Remote stream observation cancelled.'))
       const timer = setTimeout(() => finish(new RpcError('TIMEOUT', 'Remote stream timed out before the expected item.')), timeoutMs)
+      signal?.addEventListener('abort', aborted, { once: true })
+      let processing = Promise.resolve()
       socket.on('open', () => {
         socket.send(JSON.stringify({ type: 'open', streamId, endpoint, payload: { args } }))
       })
       socket.on('message', raw => {
-        if (settled) return
-        try {
+        processing = processing.then(async () => {
+          if (settled) return
           const frame = JSON.parse(raw.toString())
           if (frame.streamId !== streamId) return
           if (frame.type === 'error') finish(new RpcError(frame.error?.code || 'STREAM_ERROR', this.redact(frame.error?.message || 'Remote stream failed.')))
           else if (frame.type === 'end') finish(new RpcError('STREAM_ENDED', 'Remote stream ended before the expected item.'))
-          else if (frame.type === 'item' && accept(frame.value)) finish(undefined, frame.value)
-        } catch (error) {
+          else if (frame.type === 'item' && await accept(frame.value)) finish(undefined, frame.value)
+        }).catch(error => {
           finish(error instanceof RpcError ? error : new RpcError('BAD_FRAME', 'Invalid Remote stream item or consumer failure.'))
-        }
+        })
       })
       socket.on('unexpected-response', (request, response) => {
         response.resume()

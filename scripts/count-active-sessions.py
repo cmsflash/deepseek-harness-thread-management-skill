@@ -11,7 +11,8 @@ import glob
 import json
 import os
 import sys
-from datetime import datetime, timezone
+from datetime import datetime
+from zoneinfo import ZoneInfo
 
 
 def load_registry(dsh_home: str) -> dict:
@@ -43,13 +44,14 @@ def summarize(dsh_home: str) -> dict:
 
     on_disk = {
         os.path.basename(os.path.dirname(p))
-        for p in glob.glob(os.path.join(dsh_home, "sessions", "*", "*", "session.jsonl*"))
+        for pattern in ("session.jsonl*", "session.v*.jsonl*")
+        for p in glob.glob(os.path.join(dsh_home, "sessions", "*", "*", pattern))
     }
 
     return {
         "registry_path": registry["path"],
-        "registry_mtime": datetime.fromtimestamp(registry["mtime"], timezone.utc)
-        .astimezone().strftime("%Y-%m-%d %H:%M:%S"),
+        "registry_mtime": datetime.fromtimestamp(registry["mtime"], ZoneInfo("America/Los_Angeles"))
+        .strftime("%Y-%m-%d %H:%M:%S %Z"),
         "active": len(owned - archived),
         "archived_owned": len(owned & archived),
         "owned": len(owned),

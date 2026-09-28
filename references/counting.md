@@ -1,85 +1,104 @@
-# Counting DSH sessions from the workspace registry
+# Count DSH sessions
 
-The full method behind `scripts/count-active-sessions.py`. Read this when a count
-needs auditing, when the number disagrees with the GUI, or when working on the
-script itself.
+Count workspace ownership minus the archive set. A session log on disk is not
+necessarily a sidebar thread: subagent children and other unowned sessions can
+have logs without a workspace slot. Active in this document means
+**workspace-owned and not archived**, not currently running.
 
-## The formula
+## Use the live workspace baseline
 
-Registry: `$DSH_HOME/storages/workspace.json`, owned by
-`packages/workspace/workspace/src/spec.ts` in the deepseek-harness repo.
-
-```
-owned    = union of tables.workspaces[w].sessionIds for w in global.workspaceIds
-archived = set(global.archivedSessionIds)
-ACTIVE   = |owned − archived|
-```
-
-Two fields carry the whole result:
-
-- `global.workspaceIds` — the authoritative workspace list and display order.
-- `global.archivedSessionIds` — a registry-global archive set. Per its own spec
-  JSDoc, an archived session *keeps* its `sessionIds` slot so unarchiving can
-  restore its position. Archiving is a reversible display flag, never deletion —
-  so archived sessions must be subtracted, not assumed absent.
-
-## Why disk counts are wrong
-
-Three populations, and only the first is what a session count usually means:
-
-| Population | Where it lives |
-|---|---|
-| **Active** | owned by a workspace, absent from the archive set |
-| **Archived** | owned, present in the archive set |
-| **Orphaned** | a log on disk that no workspace's `sessionIds` contains |
-
-Orphans are the large hidden population, and they are overwhelmingly **subagent
-child sessions** — every delegation writes its own log without being filed into a
-workspace. Verify rather than assume, reading only the header line's `origin`
-field:
+After [authenticating the correct Host](rpc.md), read one application frame:
 
 ```sh
-zstd -dc "$LOG" | head -1 | python3 -c "import json,sys;print(json.load(sys.stdin).get('header',{}).get('origin'))"
+node scripts/rpc.mjs stream workspace/follow '{}' --max-items 1
 ```
 
-Never decompress another session's message content to count it; the header line
-carries everything a count needs.
+`workspace/follow` takes empty named arguments and begins with
+`{type:"baseline",value:{items,archivedSessionIds}}`. Compute from that single
+baseline:
 
-## Traps
-
-**The registry mutates while the server runs.** Archiving a session in the GUI
-rewrites `workspace.json` immediately. Repeated counts minutes apart legitimately
-differ. Always report the count with the registry's mtime, which the script
-prints. A changing number across reads is real archiving, not a broken method.
-
-**You are reading a file the server owns in memory.** Unflushed state can make an
-on-disk read lag the GUI. For an authoritative live figure, read the GUI itself.
-
-**BSD `find` parses DSH's project directory names as flags.** Project directories
-are named like `--Users-zhuoran-Programs-core--`; a bare
-`find --Users-.../ -name ...` fails with `illegal option`. Prefix with `./` or use
-a glob. This failure prints per-directory errors and can total to zero silently.
-
-**"Not archived" ≠ "shown".** Do not compute active as
-`logs_on_disk − archived`; that silently folds orphans into the total. Active is
-`owned − archived`.
-
-**Further UI-side filters exist.** `deriveGroups` in
-`packages/client/ui-workspace/src/client/tree.ts` also hides blank sessions
-(except the current selection) and only populates a group's rows when the group
-is expanded. The registry count is the ceiling of what the sidebar renders, not
-an exact render count.
-
-## Reference reading
-
-A verified snapshot, for shape only — every number here moves:
-
-```
-logs on disk                   110
-  owned by a workspace          61   → active 27 / archived 34
-  orphaned (subagent children)  49
+```text
+owned          = union of value.items[].sessionIds
+archived       = set(value.archivedSessionIds)
+active         = |owned − archived|
+archived_owned = |owned ∩ archived|
 ```
 
-At that moment `ACTIVE` was **27**. Later reads in the same hour returned 26 and
-25 as sessions were archived live. Treat the *ratio* as durable and the digits as
-a timestamped snapshot.
+Include blank sessions in this count. To report running state or inspect cached
+titles, join the IDs with:
+
+```sh
+node scripts/rpc.mjs call session/list '{"_request":{}}'
+```
+
+`session/list` alone is not an active-workspace count: it can include archived
+sessions and subagents. A missing row is a discrepancy to report, not permission
+to silently remove the ID from the ownership total. The workspace baseline and
+session listing are separate observations and can race with changes.
+
+Do not open `session/follow` on every thread for counts or an activity audit;
+it can promote cold Agents. The workspace baseline and session list do not
+need that promotion. For exact committed reply times on selected ordinary
+threads, use [read-last-reply.mjs](../scripts/read-last-reply.mjs), not a cached
+projection `asOfSeq` as though it were the current log end.
+
+## Use the local-file helper when appropriate
+
+[count-active-sessions.py](../scripts/count-active-sessions.py) reads the
+workspace registry and counts log paths without loading message bodies:
+
+```sh
+python3 scripts/count-active-sessions.py
+python3 scripts/count-active-sessions.py --json
+python3 scripts/count-active-sessions.py --dsh-home /path/to/.dsh
+```
+
+The home selection order is `--dsh-home`, then `$DSH_HOME`, then `~/.dsh`.
+Confirm that this home belongs to the Host being discussed; changing
+`DSH_WEB_URL` does not change the counter's local data source.
+
+The registry is `$DSH_HOME/storages/workspace.json`. Its equivalent formula is:
+
+```text
+owned    = union of tables.workspaces[w].sessionIds for w in global.workspaceIds
+archived = set(global.archivedSessionIds)
+active   = |owned − archived|
+```
+
+`global.workspaceIds` defines the authoritative workspace list. Archiving keeps
+the session's slot, so archived IDs must be subtracted. The helper reads a file
+snapshot, not an atomic live Host view; prefer the authenticated workspace
+baseline when reconciling current state.
+
+## Keep the populations separate
+
+| Population | Definition |
+|---|---|
+| Active | Workspace-owned and absent from the archive set |
+| Archived, owned | Workspace-owned and present in the archive set |
+| Orphan log | Log on disk without an owning workspace slot |
+| Archived without owner | Archive-set ID without an owning workspace slot |
+| Owned without log | Workspace-owned ID with no log found by the local scan |
+
+Unowned logs are not automatically disposable or broken. Subagent children
+normally account for some of them. When attribution matters, inspect only the
+log header's `origin` and parent metadata. Do not decompress whole message
+histories merely to count or classify paths, and do not infer all orphans are
+children from a past sample.
+
+## Report the count accurately
+
+State the population and source with the result. Include the live observation
+time or the local registry mtime, converted to `America/Los_Angeles` and labelled
+PST or PDT. An unlabelled machine-local timestamp must be converted or verified
+before quoting it as Pacific Time; leave timestamps inside quoted logs unchanged.
+
+The registry can change between reads, so a changed number is not by itself a
+counting error. Conversely, do not assume every difference is archiving: first
+check the Host, home directory, population, and observation cut.
+
+The sidebar can hide blank sessions except the selected one, and collapsed
+groups can hide their rows. Thus `owned − archived`, including blanks, is the
+ownership/archive population, not an exact count of rendered rows. Never
+compute it as `logs_on_disk − archived`, which includes unowned logs, or label
+it as a count of running turns.
