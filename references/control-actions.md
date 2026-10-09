@@ -1,137 +1,192 @@
-# DSH control actions: the write surface
+# DSH control actions
 
-Wire recipes for acting on another thread. `$API` is
-`http://127.0.0.1:3080/api`; every call uses the envelope documented in
-SKILL.md, and every call here is a **write**, so the propose-then-act rule
-governs all of them: the target's durable log cannot tell an agent from the
-owner.
+Use the authenticated client and named-argument envelopes in
+[Authenticated RPC](rpc.md). Run examples from the skill directory after
+selecting and authenticating the authorized Host.
+
+**Propose, then act.** Get human approval of the exact target, action, and
+content before any write. `rpc.mjs call` sends immediately; it has no dry-run
+mode. Authentication is not permission to act. Every prompt and queue edit
+carries the `[agent-drafted: …]` header from [SKILL.md](../SKILL.md#standing-rules).
+The listing and observation examples below are reads, not permission to perform
+their adjacent writes.
 
 ## Session lifecycle
 
-```sh
-# create (preallocated id is idempotent on retry; needs the FULL workspace id)
-curl -s -X POST $API/session.create -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"c1","method":"session.create","payload":{"sessionId":"session-<uuid>","workspaceId":"<full uuid>"}}'
-# fork: child inherits cwd, model target, lineage; seed = source's last completed turn
-# atSeq anchors to the first turn/end at or after it; a still-open turn fails fork-unavailable
-curl -s -X POST $API/session.fork   -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"c2","method":"session.fork","payload":{"sessionId":"<src>"}}'
-# rename (pins the title against regeneration)
-curl -s -X POST $API/session.rename -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"c3","method":"session.rename","payload":{"sessionId":"<id>","title":"New title"}}'
-# archive: display-level; keeps the log and the workspace slot. One-way over the
-# API — there is no unarchive method. See references/unarchive.md to get one back.
-curl -s -X POST $API/workspace.archiveSession -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"c4","method":"workspace.archiveSession","payload":{"sessionId":"<id>"}}'
-```
-
-`workspaceId` must be the full UUID from `workspace.list` — a truncated id
-returns `workspace-not-found` and looks like the workspace vanished.
-
-There is no session deletion anywhere in DSH — no RPC, no CLI, no registry
-method. Session logs are append-only and permanent. (`session-query-sqlite`'s
-`_deleteSession` removes search-index rows, not logs.) Archiving is the only
-"remove from view" operation, which is why unarchiving matters.
-
-## Cancel
+Discover full workspace IDs from the `workspace/follow` baseline, not a
+truncated display ID. These calls use `payload.args.request`:
 
 ```sh
-curl -s -X POST $API/session.cancel -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"k1","method":"session.cancel","payload":{"sessionId":"<id>"}}'
+node scripts/rpc.mjs call session/create '{"request":{"sessionId":"session-<fresh UUID>","workspaceId":"<full workspace ID>"}}'
+node scripts/rpc.mjs call session/fork '{"request":{"sessionId":"<source session ID>"}}'
+node scripts/rpc.mjs call session/rename '{"request":{"sessionId":"<session ID>","title":"<exact approved title>"}}'
+node scripts/rpc.mjs call workspace/archiveSession '{"request":{"sessionId":"<session ID>"}}'
+node scripts/rpc.mjs call workspace/unarchiveSession '{"request":{"sessionId":"<session ID>"}}'
 ```
 
-Cancelling preserves pending inbox work — it resumes after settlement. The log
-records `{kind:"aborted", reason:{kind:"user"}}`, identically for API cancels and
-the owner's stop button.
+Archive hides a session without removing its log or workspace slot. Native
+unarchive restores the same ID on the running Host. Prefer the dry-run recovery
+helper in [Restoring archived threads](unarchive.md) for previewing these actions.
+Do not edit the workspace registry or stop the server to restore a thread.
 
-## The transient queue
+Fork creates a new session with `parentSession` lineage and a history prefix
+ending at a `turn/end` boundary. Its default cut omits an unfinished tail; an
+`atSeq` inside a turn with no eligible end fails `session/fork-unavailable`.
+Subagent children remain attached to the original, not the fork. Do not assume
+runtime model selection transfers; choose unarchive when preserving the
+original identity and state is the goal.
 
-Pending inbox state lives only in the mux stream (`session/queue` frames), never
-in the durable log. Watch it with a WebSocket on `ws://<host>/api/events.mux`
-filtering `payload.sessionId` (a plain GET returns `426 Upgrade Required`). Each
-frame is the complete snapshot:
-`{placement: "queued"|"steering"|"context", id, message}`.
+## Cancel a turn
 
 ```sh
-# edit a still-pending queued message (content replaces wholesale; keep the
-# [agent-drafted: …] header from SKILL.md on line 1)
-curl -s -X POST $API/session.updateQueue -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"q1","method":"session.updateQueue","payload":{"sessionId":"<id>","itemId":"<msg uuid>","action":{"kind":"edit","content":[{"type":"text","text":"replacement"}]}}}'
-# remove a pending message
-#   same shape with "action":{"kind":"remove"}
-# convert a queued message into a steer of the running turn
-#   same shape with "action":{"kind":"steer"}
+node scripts/rpc.mjs call session/cancel '{"request":{"sessionId":"<session ID>"}}'
 ```
 
-Cancelled turns preserve their queued messages; after settlement (seconds to
-~80s observed) the next queued message claims the following turn. A queue-edit
-survives durably: the edited text is what the turn claims.
+`{accepted:true}` acknowledges cancellation, not quiescence. Pending inbox work
+is preserved and can start a later turn. Removing queued work is a separate
+write requiring approval of the specific item.
 
-## Slash commands (the permission switch, and more)
+## Inspect or change pending input
 
-`session.prompt` does NOT intercept slash commands — a prompt starting with `/`
-goes to the model as ordinary text. Commands execute through the Typert gateway
-with NAMED args:
+Pending input is represented by the `inbox` projection, with `next-turn` and
+`next-step` arrays of messages. A message's `id` is the `itemId` for a queue
+mutation; it is not a prompt request ID or a pending-interaction event ID.
+
+For resident sessions, a bounded `session/control` read provides
+`baseline.value.projections[sessionId].values.inbox`; later projection frames
+replace the value for their session and key:
 
 ```sh
-curl -s -X POST $API/commands/execute -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"cmd1","method":"commands/execute","payload":{"args":{"agentId":"<sessionId>","line":"/permission read-only","images":[]}}}'
+node scripts/rpc.mjs stream session/control '{}' --max-items 1
 ```
 
-`/permission <preset>` is the practical use: switch a thread between
-`read-only` / `workspace-write` / `danger-full-access` (this also changes its
-approval policy). Other registered commands take the same shape. An unknown
-command returns a success envelope with no `value` — check for `.result.value`
-before trusting execution.
+An absent projection is not proof that a cold session has no queued work. Do
+not bulk-follow cold sessions just to populate control state. Pending input is
+reconstructed from durable `agent/inbox/spliced` events, not only a transient
+WebSocket queue.
 
-## Approvals and questions
-
-When a thread hits a permission boundary (or calls `ask_user_question`), the host
-mints an answerable frame with a **fresh envelope rpcId** and pushes it on the
-mux stream. The frame replays — same rpcId — on every stream open while still
-pending. Answering is `POST /api/respond` with the envelope's rpcId echoed plus a
-payload validated against the pending entry.
-
-Use the bundled script rather than hand-rolling the dance:
+After approval, edit, remove, or promote one still-pending message:
 
 ```sh
-scripts/respond.mjs <sessionId>                      # list pending approvals/questions
-scripts/respond.mjs <sessionId> --approve <approvalId> [allowed-once|rejected]
-scripts/respond.mjs <sessionId> --answer '[{"id":"color","selected":["Red"]}]'
+node scripts/rpc.mjs call session/updateQueue '{"request":{"sessionId":"<session ID>","itemId":"<message ID>","action":{"kind":"edit","content":[{"type":"text","text":"<exact approved replacement>"}]}}}'
+node scripts/rpc.mjs call session/updateQueue '{"request":{"sessionId":"<session ID>","itemId":"<message ID>","action":{"kind":"remove"}}}'
+node scripts/rpc.mjs call session/updateQueue '{"request":{"sessionId":"<session ID>","itemId":"<message ID>","action":{"kind":"steer"}}}'
 ```
 
-It connects, collects the replayed pending frames, and answers through
-`/api/respond` in one step. Question answers are semantically validated: answer
-ids must match the question ids in order, selected labels must be among the
-question's declared options, and a single-select question takes exactly one
-selected label. Approvals correlate by `sessionId` + `approvalId`.
+Edits replace content wholesale and accept nonempty text only. Steering
+requires a next-turn item and a running target. The item may be consumed between
+inspection and submission; a missing-item or unavailable-steer error is not a
+reason to retry automatically.
 
-The consequence chain for an approval: `approval/asked` event → your outcome via
-respond → `approval/decided` event (e.g. `allowed-once`) → the escalated tool
-call executes. For a question: `question/requested` frame → answer →
-`question/resolved` outcome `answered` → the model receives your answer as the
-tool result, verbatim.
+## Execute a slash command
 
-**This is the one action to hold hardest.** Answering is the owner's permission
-decision; never do it without an explicit, specific instruction for that exact
-request.
-
-## Subagent children over HTTP
-
-`subagent.prompt` and `subagent.interrupt` over HTTP need no live parent and no
-in-harness authority — naming the `parentSessionId` in the address IS the
-credential (this is the exact check that blocks in-harness `send_message`; the
-HTTP layer does not repeat it):
+A slash-prefixed `session/prompt` message goes to the model as text. Invoke
+commands through `commands/execute` with these direct named arguments:
 
 ```sh
-# child ids come from subagent.list; continuable children accept prompts
-curl -s -X POST $API/subagent.list -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"s1","method":"subagent.list","payload":{"parentSessionId":"<parent>"}}'
-curl -s -X POST $API/subagent.prompt -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"s2","method":"subagent.prompt","payload":{"parentSessionId":"<parent>","childSessionId":"<child>","mode":"continuable","content":[{"type":"text","text":"..."}]}}'
-curl -s -X POST $API/subagent.interrupt -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"s3","method":"subagent.interrupt","payload":{"parentSessionId":"<parent>","childSessionId":"<child>","mode":"continuable"}}'
+node scripts/rpc.mjs call commands/execute '{"agentId":"<session ID>","line":"/permission read-only","submittedAttachments":[]}'
 ```
 
-`subagent.prompt` returns a `messageId`; the child's next turn carries your
-content. `subagent.interrupt` is fire-and-return: `accepted` acknowledges the
-cancel signal, not quiescence.
+That example changes permissions and needs explicit approval just like any
+other command. `submittedAttachments` is required even for a plain invocation;
+use an empty array. An undefined `result.value` means no command matched the
+line; the CLI prints `null`. When a value exists, inspect the nested command
+result rather than treating RPC success as command success.
 
-## Trials
+## Observe pending approvals or questions
 
-To prove or rehearse an action without touching real threads: create a scratch
-session (`session.create`, preallocated id), run trivial `Reply with exactly: X`
-turns, arm an approval by setting `/permission read-only` then requesting a file
-write outside the workspace, and answer it with `scripts/respond.mjs`. Every
-capability in this file was validated that way against live threads. Leave the
-scratch threads in place unless told to clean up — the owner inspects them.
+**Never answer without the human's exact authorization for that event and
+response.** The approval is their permission decision; a question is their
+input, not an invitation to choose on their behalf.
+
+```sh
+node scripts/respond.mjs session-xxxx --list
+node scripts/respond.mjs session-xxxx --list --wait-seconds 3
+```
+
+The helper opens `$events` over `/api/remote.mux`. Application frames include:
+
+```jsonl
+{"type":"ready","clientId":"<connection generation>"}
+{"type":"waterfall","event":"approval/request","eventId":"<event ID>","agentId":"<session ID>","request":{}}
+{"type":"waterfall","event":"user-questions/request","eventId":"<event ID>","agentId":"<session ID>","request":{}}
+{"type":"cancel","eventId":"<event ID>"}
+```
+
+Use the actual `request` to identify the permission boundary or question.
+`cancel` removes the corresponding pending entry. Listing filters for the
+specified session and observes a bounded window after `ready`, three seconds
+by default. There is no atomic replay-complete marker: `complete:false` and an
+empty `pending` array do not prove that no request exists. Passive listing
+never calls `$events/next` to advance a waterfall.
+
+### Submit an authorized response
+
+The approval argument is the waterfall's **event ID**, not an approval ID or a
+transport `rpcId`. Question responses also require an explicit event ID:
+
+```sh
+node scripts/respond.mjs session-xxxx --approve '<event ID>' allowed-once
+node scripts/respond.mjs session-xxxx --approve '<event ID>' rejected
+node scripts/respond.mjs session-xxxx --answer '[{"id":"color","selected":["Red"]}]' --event-id '<event ID>'
+```
+
+The omitted approval outcome defaults to `allowed-once`; pass it explicitly
+when carrying out a human decision. Question answers must name each question
+from the selected event exactly once. Use the request's exact option labels and
+only the human-approved selections or custom text.
+
+The helper waits to observe that event on a live stream. While keeping the same
+connection open, it submits unary `$events/result` with direct named arguments:
+
+```json
+{"clientId":"<live connection generation>","eventId":"<event ID>","outcome":{"kind":"result","value":"allowed-once"}}
+```
+
+For questions, `outcome.value` is `{"answers":[...]}`. If the exact event is not
+observed in the window, nothing is submitted. Do not reuse a `clientId` from a
+closed listing connection or guess an event ID.
+
+A successful result RPC can be a stale no-op if the request has already
+settled. The helper therefore reports `status:"submitted"` with
+`confirmation:"unconfirmed"`, not "approved" or "answered". Report that limit,
+verify separately when needed, and never retry an uncertain submission
+without checking state and authorization.
+
+## Address subagent children
+
+Read the direct-child catalog with `subagents/list`:
+
+```sh
+node scripts/rpc.mjs call subagents/list '{"parentSessionId":"<parent session ID>"}'
+```
+
+After approval, a continuable child's prompt uses a nested request with its own
+required `requestId` and explicit `delivery`:
+
+```sh
+node scripts/rpc.mjs call subagents/prompt '{"request":{"requestId":"<fresh prompt UUID>","parentSessionId":"<parent session ID>","childSessionId":"<child session ID>","mode":"continuable","delivery":"queue","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"<exact approved message>"}]}}'
+```
+
+Use `delivery:"steer"` only for explicitly authorized steering. Prompt delivery
+requires the exact live direct parent and a resumable child; naming a parent
+is not a credential or a way around delegated authority. A returned `messageId`
+means the child's inbox accepted the message, not that it finished.
+
+Interrupt uses direct named arguments, not a nested request:
+
+```sh
+node scripts/rpc.mjs call subagents/interruptByParent '{"childSessionId":"<child session ID>","parentSessionId":"<parent session ID>","mode":"continuable"}'
+```
+
+It validates the parent address against a live child's ownership and can work
+while the parent is offline. Absent or idle targets can be accepted no-ops;
+`accepted` is not proof that a turn was interrupted or has settled. Do not send
+child control through ordinary-session endpoints to avoid these checks.
+
+## Validate without unrelated writes
+
+Run `node --test tests/*.test.mjs` from the skill directory. For an authorized
+live action, check the method's receipt and the relevant resulting state. Do
+not create scratch sessions, change permissions, or answer pending requests
+merely to rehearse a transport call.
