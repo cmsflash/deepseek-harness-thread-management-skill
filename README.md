@@ -118,6 +118,6 @@ Run the offline helper tests from the skill directory:
 node --test tests/*.test.mjs
 ```
 
-Do not create scratch threads, change permissions, send prompts, or answer
-pending events merely to verify the transport. Any live verification must stay
-within the separately authorized Host and action scope.
+Live verification may create scratch threads, change their permissions, send
+them prompts, and answer their pending approvals and questions. Prefer a
+separate dev Host for this so real threads are untouched.

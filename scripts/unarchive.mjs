@@ -47,7 +47,8 @@ try {
             print({ action: 'fork', sourceSessionId: sessionId, result })
             if (values['archive-original']) {
               const receipt = await client.request('workspace/archiveSession', { request: { sessionId } })
-              print({ action: 'archive', sessionId, archived: receipt.archivedSessionIds.includes(sessionId) })
+              if (!receipt.archivedSessionIds.includes(sessionId)) throw new RpcError('BAD_RECEIPT', 'Archive-state receipt does not confirm the original was archived.')
+              print({ action: 'archive', sessionId, archived: true })
             }
           } else {
             const endpoint = action === 'restore' ? 'workspace/unarchiveSession' : 'workspace/archiveSession'

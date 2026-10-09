@@ -6,14 +6,14 @@ import { readLastReply } from './thread-reader.mjs'
 let client
 try {
   const { values } = parseArgs({ options: {
-    session: { type: 'string' }, 'base-url': { type: 'string' }, 'auth-file': { type: 'string' },
+    session: { type: 'string' }, parent: { type: 'string' }, 'base-url': { type: 'string' }, 'auth-file': { type: 'string' },
     'max-messages': { type: 'string', default: '8' }, 'through-seq': { type: 'string' },
     'timeout-ms': { type: 'string', default: '120000' },
     'max-download-mib': { type: 'string', default: '256' }, 'max-log-mib': { type: 'string', default: '768' },
     json: { type: 'boolean' }, help: { type: 'boolean' },
   } })
   if (values.help || !values.session) {
-    console.log('Usage: read-last-reply.mjs --session ID [--json] [--base-url ORIGIN] [--auth-file FILE] [--through-seq N] [--max-messages 8]')
+    console.log('Usage: read-last-reply.mjs --session ID [--parent PARENT_ID] [--json] [--base-url ORIGIN] [--auth-file FILE] [--through-seq N] [--max-messages 8]')
     if (!values.help) process.exitCode = 1
   } else {
     const maxMessages = Number(values['max-messages'])
@@ -25,7 +25,7 @@ try {
       || !Number.isSafeInteger(maxDownloadBytes) || maxDownloadBytes < 1
       || !Number.isSafeInteger(maxLogBytes) || maxLogBytes < 1) throw new RpcError('BAD_ARGUMENTS', 'Invalid history cursor or read limit.')
     client = new RpcClient({ baseUrl: values['base-url'], authFile: values['auth-file'], timeoutMs: Number(values['timeout-ms']) })
-    const result = await readLastReply(client, values.session, { maxMessages, throughSeq, maxDownloadBytes, maxLogBytes })
+    const result = await readLastReply(client, values.session, { maxMessages, throughSeq, maxDownloadBytes, maxLogBytes, parentSessionId: values.parent })
     if (values.json) console.log(client.redact(JSON.stringify(result)))
     else {
       console.log(`session: ${result.sessionId}\ntitle: ${result.title || '(untitled)'}\nrunning: ${result.running}\nlatest turn: ${result.lastTurnStatus}`)

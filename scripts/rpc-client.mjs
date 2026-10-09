@@ -304,7 +304,9 @@ export class RpcClient {
           `Remote stream returned HTTP ${response.statusCode}.`, response.statusCode))
       })
       socket.on('error', () => finish(new RpcError('STREAM_ERROR', 'Remote WebSocket connection failed.')))
-      socket.on('close', () => finish(new RpcError('STREAM_ENDED', 'Remote WebSocket closed before the expected item.')))
+      socket.on('close', () => {
+        processing.then(() => finish(new RpcError('STREAM_ENDED', 'Remote WebSocket closed before the expected item.')))
+      })
     })
   }
 }

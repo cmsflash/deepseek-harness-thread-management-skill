@@ -564,3 +564,24 @@ test('a protected host cannot cause restore to fall back to offline editing', { 
     assert.equal(env.handshakes.length, 1)
   })
 })
+
+test('fork with archive-original fails when the archive receipt does not list the original', { timeout: 10_000 }, async t => {
+  for (const archived of [true, false]) await t.test(archived ? 'confirmed' : 'unconfirmed', async t => {
+    const writes = []
+    const env = await fixture(t, { workspace: archivedWorkspace(), rpc(envelope, response) {
+      writes.push(envelope.method)
+      if (envelope.method === 'session/fork') json(response, { sessionId: 'session-fork-fixture' })
+      else json(response, { archivedSessionIds: archived ? [sessionId] : [] })
+    } })
+    const result = await run(env, 'unarchive.mjs', ['fork', sessionId, '--archive-original', '--commit'])
+    assert.deepEqual(writes, ['session/fork', 'workspace/archiveSession'])
+    if (archived) {
+      assert.equal(result.code, 0, result.stderr)
+      const receipts = result.stdout.trim().split('\n').map(line => JSON.parse(line))
+      assert.deepEqual(receipts.at(-1), { action: 'archive', sessionId, archived: true })
+    } else {
+      assert.notEqual(result.code, 0)
+      assert.match(result.stderr, /BAD_RECEIPT/u)
+    }
+  })
+})

@@ -110,7 +110,7 @@ function downloadFixture(chunks, { contentType = 'application/zip', body = true 
   };
 }
 
-function clientFixture({ items = [summary()], pages = [], download } = {}) {
+function clientFixture({ items = [summary()], pages = [], download, children = [] } = {}) {
   const calls = [];
   let page = 0;
   return {
@@ -119,6 +119,7 @@ function clientFixture({ items = [summary()], pages = [], download } = {}) {
       async request(method, args) {
         calls.push({ method, args: structuredClone(args) });
         if (method === 'session/list') return { items };
+        if (method === 'subagents/list') return { entries: children, parentAvailable: true };
         assert.equal(method, 'session/page', 'reader must not follow or otherwise attach to a session');
         assert.ok(page < pages.length, 'reader requested an unexpected additional page');
         const result = pages[page++];
@@ -162,7 +163,7 @@ test('exportCursorDecoder streams only the first root log and preserves its exac
       ] }), { chunkSize: 7 });
       assert.deepEqual(result, {
         header, title: 'Committed title', cursor: 34, decodedBytes: Buffer.byteLength(log),
-        lastInteractionAt: 500, lastPromptAt: 100,
+        lastInteractionAt: 500, lastPromptAt: 100, lastPromptSeq: 1,
         lastTurnStart: { seq: 3, time: 300, turn: 'turn-1' },
         lastTurnEnd: { seq: 8, time: 800, turn: 'turn-1', reason: { kind: 'completed' } },
       });
@@ -227,7 +228,7 @@ test('exportCursorDecoder permits blank lines, CRLF, and a final JSON record wit
   assert.equal(decode(archive(log), { chunkSize: 3 }).title, 'Last line');
   assert.deepEqual(decode(archive(jsonl())), {
     header, title: undefined, cursor: -1, decodedBytes: Buffer.byteLength(jsonl()),
-    lastInteractionAt: null, lastPromptAt: null, lastTurnStart: null, lastTurnEnd: null,
+    lastInteractionAt: null, lastPromptAt: null, lastPromptSeq: null, lastTurnStart: null, lastTurnEnd: null,
   });
 });
 
@@ -682,4 +683,72 @@ test('readLastReply propagates export and page failures without falling back to 
   const badPage = clientFixture({ pages: [failure] });
   await assert.rejects(readLastReply(badPage.client, sessionId, { throughSeq: 4, summary: summary() }), error => error === failure);
   assert.deepEqual(badPage.calls, [{ method: 'session/page', args: pageArgs(4) }]);
+});
+
+test('describePage orders a same-millisecond prompt after the reply by sequence', () => {
+  const result = describePage(records(
+    prompt(1, 'Earlier question'), response(4, 'Earlier reply', 'turn-1', {}), turnEnd(5),
+    event('user/message', 6, { content: [text('Follow-up')], source: { kind: 'user' } }, 400),
+  ), { header, cursor: 6, lastPromptAt: 400, lastPromptSeq: 6 }, summary());
+  assert.equal(result.lastResponse.time, 400);
+  assert.equal(result.lastPrompt.time, 400);
+  assert.equal(result.newerPromptWithoutResponse, true);
+});
+
+test('committed export metadata records the last human prompt sequence', () => {
+  const result = decode(archive(jsonl([prompt(3, 'Question'), response(4, 'Reply'), prompt(7, 'Injected', { kind: 'system' })])));
+  assert.equal(result.lastPromptSeq, 3);
+});
+
+test('readLastReply keeps paging past progress text to the previous completed reply', async () => {
+  const pages = [
+    { records: records(turnStart(20, 'turn-2'), response(22, 'Working on it', 'turn-2')), hasMore: true },
+    { records: records(prompt(10, 'Question'), response(12, 'Completed answer'), turnEnd(14)), hasMore: true },
+  ];
+  const fixture = clientFixture({ pages });
+  const result = await readLastReply(fixture.client, sessionId, { throughSeq: 22, summary: summary({ running: true }) });
+  assert.equal(fixture.calls.length, 2);
+  assert.equal(result.lastResponse.text, 'Working on it');
+  assert.equal(result.lastResponse.kind, 'progress');
+  assert.equal(result.lastFinalReply.text, 'Completed answer');
+  assert.equal(result.note, undefined);
+});
+
+test('readLastReply reports a missing completed reply when only progress text is in range', async () => {
+  const fixture = clientFixture({ pages: [
+    { records: records(response(22, 'Working on it', 'turn-2')), hasMore: true },
+    { records: records(response(12, 'Still working', 'turn-1')), hasMore: true },
+  ] });
+  const result = await readLastReply(fixture.client, sessionId, { throughSeq: 22, summary: summary(), maxPages: 2 });
+  assert.equal(result.lastFinalReply, null);
+  assert.match(result.note, /No completed reply/u);
+});
+
+const parentId = 'session-parent-fixture';
+const childEntry = (overrides = {}) => ({ kind: 'child', id: sessionId, mode: 'continuable', label: 'Child label', activity: 'inactive', hasChildren: false, ...overrides });
+
+test('readLastReply reads a subagent child through its parent address and exact export cursor', async () => {
+  const events = [prompt(1, 'Child task'), turnStart(2), response(4, 'Child answer'), turnEnd(5)];
+  const download = downloadFixture([archive(jsonl(events, { ...header, parentSession: parentId, origin: 'subagent' }))]);
+  const fixture = clientFixture({ download, children: [childEntry({ activity: 'running' })],
+    pages: [{ records: records(...events), hasMore: false }] });
+  const result = await readLastReply(fixture.client, sessionId, { parentSessionId: parentId });
+  assert.deepEqual(fixture.calls.map(call => call.method), ['subagents/list', 'download', 'session/page']);
+  assert.deepEqual(fixture.calls[0].args, { parentSessionId: parentId });
+  assert.deepEqual(fixture.calls[2].args.request.address,
+    { kind: 'subagent', parentSessionId: parentId, childSessionId: sessionId, mode: 'continuable' });
+  assert.equal(fixture.calls[2].args.request.throughSeq, 5);
+  assert.equal(result.lastFinalReply.text, 'Child answer');
+  assert.equal(result.running, true);
+});
+
+test('readLastReply refuses a child that is not listed under the named parent', async t => {
+  for (const [name, children, log, code, methods] of [
+    ['unlisted child', [childEntry({ id: 'other-child' })], undefined, 'NOT_FOUND', ['subagents/list']],
+    ['export names another parent', [childEntry()], jsonl([], { ...header, parentSession: 'session-other-parent' }), 'BAD_EXPORT', ['subagents/list', 'download']],
+  ]) await t.test(name, async () => {
+    const fixture = clientFixture({ children, download: log && downloadFixture([archive(log)]) });
+    await assert.rejects(readLastReply(fixture.client, sessionId, { parentSessionId: parentId }), errorCode(code));
+    assert.deepEqual(fixture.calls.map(call => call.method), methods);
+  });
 });

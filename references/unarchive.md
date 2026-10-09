@@ -103,8 +103,9 @@ original's runtime model selection. Choose native restore when the goal is to
 continue the same thread with its original state.
 
 `--archive-original` adds a separate archive request after a successful fork.
-It must be part of the approved plan. If archiving fails, the new fork can still
-exist; inspect both IDs rather than retrying the fork.
+It must be part of the approved plan. If archiving fails or its receipt does not
+list the original as archived, the command exits nonzero with the new fork
+already created; inspect both IDs rather than retrying the fork.
 
 ## Boundaries
 

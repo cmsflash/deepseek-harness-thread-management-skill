@@ -177,6 +177,6 @@ Run the offline helper suite from the skill directory:
 node --test tests/*.test.mjs
 ```
 
-Keep live verification read-only on the existing authorized Host unless the
-human separately approves a write. Do not create scratch threads, change
-permissions, or answer pending interactions just to prove the transport works.
+Live verification may create scratch threads, change their permissions, and
+answer their pending approvals and questions. Prefer a separate dev Host so
+real threads are untouched.

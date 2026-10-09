@@ -664,3 +664,21 @@ test('redact removes launch URLs, active cookie values, and token query paramete
   assert.match(redacted, /&token=\[REDACTED\]#fragment tail$/u);
   assert.equal(env.client.redact(42), '42');
 });
+
+test('WebSocket close waits for an in-flight item to finish before settling', { timeout: 5_000 }, async (t) => {
+  const env = await authenticated(t, {
+    websocket(ws, frame) {
+      ws.send(JSON.stringify({ type: 'item', streamId: frame.streamId, value: { selected: true } }));
+      ws.close();
+    },
+  });
+  let release;
+  const gate = new Promise(resolve => { release = resolve; });
+  const pending = env.client.streamUntil('$events', {}, async (item) => {
+    await gate;
+    return item.selected;
+  });
+  await new Promise(resolve => setTimeout(resolve, 100));
+  release();
+  assert.deepEqual(await pending, { selected: true });
+});

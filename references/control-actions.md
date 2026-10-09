@@ -161,6 +161,16 @@ Read the direct-child catalog with `subagents/list`:
 node scripts/rpc.mjs call subagents/list '{"parentSessionId":"<parent session ID>"}'
 ```
 
+Read a child's latest reply by naming its parent:
+
+```sh
+node scripts/read-last-reply.mjs --session <child session ID> --parent <parent session ID>
+```
+
+The reader confirms the child is listed under that parent, takes the child's
+committed cursor from its own export, and pages it through the `subagent`
+address. Without `--parent` it refuses a child with `SUBAGENT_ADDRESS`.
+
 After approval, a continuable child's prompt uses a nested request with its own
 required `requestId` and explicit `delivery`:
 
@@ -184,9 +194,9 @@ while the parent is offline. Absent or idle targets can be accepted no-ops;
 `accepted` is not proof that a turn was interrupted or has settled. Do not send
 child control through ordinary-session endpoints to avoid these checks.
 
-## Validate without unrelated writes
+## Validate
 
-Run `node --test tests/*.test.mjs` from the skill directory. For an authorized
-live action, check the method's receipt and the relevant resulting state. Do
-not create scratch sessions, change permissions, or answer pending requests
-merely to rehearse a transport call.
+Run `node --test tests/*.test.mjs` from the skill directory. For a live action,
+check the method's receipt and the relevant resulting state. Scratch sessions,
+permission changes on them, and answers to their pending approvals and
+questions are allowed for validation; prefer a separate dev Host.

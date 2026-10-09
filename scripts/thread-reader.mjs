@@ -9,7 +9,7 @@ export function exportCursorDecoder(sessionId, { maxLogBytes = 768 * 1024 * 1024
   const root = process.env.DSH_ROOT || '/Users/zhuoran/Programs/deepseek-harness'
   const { Unzip, UnzipInflate } = createRequire(join(root, 'packages/session-query/session-log-export/package.json'))('fflate')
   let first = true, complete = false, header, title, cursor = -1, bytes = 0, pending = ''
-  let lastInteractionAt = null, lastPromptAt = null, lastTurnStart = null, lastTurnEnd = null
+  let lastInteractionAt = null, lastPromptAt = null, lastPromptSeq = null, lastTurnStart = null, lastTurnEnd = null
   const decoder = new TextDecoder('utf-8', { fatal: true })
   const line = value => {
     if (!value.trim()) return
@@ -27,6 +27,7 @@ export function exportCursorDecoder(sessionId, { maxLogBytes = 768 * 1024 * 1024
     if (event.type === 'turn/end') lastTurnEnd = { seq: event.seq, time: event.time, turn: data.turn, reason: { kind: data.reason?.kind } }
     if (event.type === 'user/message' && data.source?.kind === 'user') {
       lastPromptAt = event.time
+      lastPromptSeq = event.seq
       lastInteractionAt = Math.max(lastInteractionAt || 0, event.time)
     } else if (event.type === 'assistant/message' && textOf(data.message?.content)) {
       lastInteractionAt = Math.max(lastInteractionAt || 0, event.time)
@@ -68,7 +69,7 @@ export function exportCursorDecoder(sessionId, { maxLogBytes = 768 * 1024 * 1024
     get complete() { return complete },
     result() {
       if (!complete) throw new RpcError('BAD_EXPORT', 'Root log is not complete.')
-      return { header, title, cursor, decodedBytes: bytes, lastInteractionAt, lastPromptAt, lastTurnStart, lastTurnEnd }
+      return { header, title, cursor, decodedBytes: bytes, lastInteractionAt, lastPromptAt, lastPromptSeq, lastTurnStart, lastTurnEnd }
     },
   }
 }
@@ -119,7 +120,10 @@ export function describePage(records, metadata, summary = {}) {
   }
   const unfinished = metadata.lastTurnStart && (!metadata.lastTurnEnd || metadata.lastTurnStart.seq > metadata.lastTurnEnd.seq)
   const newestPromptAt = metadata.lastPromptAt ?? lastPrompt?.time ?? summary.projections?.values?.sessionListMetadata?.lastPromptAt ?? null
-  const newerPrompt = newestPromptAt !== null && (!lastResponse || newestPromptAt > lastResponse.time)
+  const newestPromptSeq = metadata.lastPromptSeq ?? lastPrompt?.seq ?? null
+  // Event times share milliseconds, so order by seq whenever the prompt's seq is known.
+  const newerPrompt = newestPromptSeq !== null ? !lastResponse || newestPromptSeq > lastResponse.seq
+    : newestPromptAt !== null && (!lastResponse || newestPromptAt > lastResponse.time)
   return {
     sessionId: summary.sessionId || metadata.header?.id,
     title: metadata.title ?? summary.projections?.values?.title ?? null,
@@ -133,26 +137,45 @@ export function describePage(records, metadata, summary = {}) {
   }
 }
 
-export async function readLastReply(client, sessionId, { maxMessages = 8, throughSeq, summary, maxPages = 16, ...limits } = {}) {
-  if (!summary) {
-    const listing = await client.request('session/list', { _request: {} })
-    summary = listing.items.find(item => item.sessionId === sessionId)
+async function childAddress(client, parentSessionId, childSessionId) {
+  const listing = await client.request('subagents/list', { parentSessionId })
+  const entry = listing.entries?.find(item => item.kind === 'child' && item.id === childSessionId)
+  if (!entry) throw new RpcError('NOT_FOUND', 'Session is not a direct subagent child of the named parent.')
+  return {
+    address: { kind: 'subagent', parentSessionId, childSessionId, mode: entry.mode },
+    summary: { sessionId: childSessionId, running: entry.activity === 'running', blank: false,
+      projections: { values: { title: entry.label ?? null } } },
   }
-  if (!summary) throw new RpcError('NOT_FOUND', 'Session is absent from the current host list.')
-  if (summary.origin === 'subagent') throw new RpcError('SUBAGENT_ADDRESS', 'Use the parent-scoped subagent API for child histories.')
-  if (summary.blank) return { sessionId, title: summary.projections?.values?.title ?? null, running: summary.running,
-    blank: true, lastInteractionAt: null, lastPrompt: null, lastResponse: null, lastFinalReply: null, lastTurnStatus: 'blank' }
+}
+
+export async function readLastReply(client, sessionId, { maxMessages = 8, throughSeq, summary, parentSessionId, maxPages = 16, ...limits } = {}) {
+  let address = { kind: 'session', sessionId }
+  if (parentSessionId !== undefined) {
+    ({ address, summary } = await childAddress(client, parentSessionId, sessionId))
+  } else {
+    if (!summary) {
+      const listing = await client.request('session/list', { _request: {} })
+      summary = listing.items.find(item => item.sessionId === sessionId)
+    }
+    if (!summary) throw new RpcError('NOT_FOUND', 'Session is absent from the current host list.')
+    if (summary.origin === 'subagent') throw new RpcError('SUBAGENT_ADDRESS', 'Pass the parent session ID to read a subagent child.')
+    if (summary.blank) return { sessionId, title: summary.projections?.values?.title ?? null, running: summary.running,
+      blank: true, lastInteractionAt: null, lastPrompt: null, lastResponse: null, lastFinalReply: null, lastTurnStatus: 'blank' }
+  }
   const metadata = throughSeq === undefined ? await committedCursor(client, sessionId, limits) : { cursor: throughSeq }
+  if (parentSessionId !== undefined && metadata.header && metadata.header.parentSession !== parentSessionId) {
+    throw new RpcError('BAD_EXPORT', 'Exported child log names a different parent session.')
+  }
   const records = []
   let beforeSeq
   for (let page = 0; page < maxPages; page++) {
     const result = await client.request('session/page', { request: {
-      address: { kind: 'session', sessionId }, throughSeq: metadata.cursor, maxMessages, stepDetail: 'collapsed',
+      address, throughSeq: metadata.cursor, maxMessages, stepDetail: 'collapsed',
       ...(beforeSeq === undefined ? {} : { beforeSeq }),
     } })
     records.unshift(...result.records)
     const described = describePage(records, metadata, summary)
-    if (described.lastResponse || !result.hasMore || result.records.length === 0) {
+    if (described.lastFinalReply || !result.hasMore || result.records.length === 0) {
       return { ...described, cursorSource: throughSeq === undefined ? 'committed-export' : 'explicit-cut',
         snapshotAt: Date.now(), downloadedBytes: metadata.downloadedBytes, decodedBytes: metadata.decodedBytes }
     }
@@ -161,5 +184,7 @@ export async function readLastReply(client, sessionId, { maxMessages = 8, throug
     beforeSeq = first
   }
   return { ...describePage(records, metadata, summary), cursorSource: throughSeq === undefined ? 'committed-export' : 'explicit-cut',
-    snapshotAt: Date.now(), note: 'No assistant text found within the bounded history search.' }
+    snapshotAt: Date.now(), note: records.some(record => record.event?.type === 'assistant/message')
+      ? 'No completed reply found within the bounded history search.'
+      : 'No assistant text found within the bounded history search.' }
 }
