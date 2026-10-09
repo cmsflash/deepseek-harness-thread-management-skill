@@ -34,8 +34,16 @@ Port 3080 is the default. When it is wrong:
 input in the target's durable log: an injected prompt lands as `kind: 'user'`, a
 cancel logs `reason: {kind: "user"}`, an approval outcome logs as if the owner
 clicked it. Draft the action and its exact content, get the human's approval,
-then send exactly what was approved. When relaying agent-drafted content, say so
-in the message text — nothing else will.
+then send exactly what was approved.
+
+**Header every message to another thread.** Line 1 of every prompt and queue
+edit you send is exactly
+`[agent-drafted: <Source Title> (<source session ID>) -> <Target Title> (<target session ID>)]`,
+line 2 is empty, and the message starts on line 3. Source is your own thread
+(`$DSH_SESSION_ID`); target is the receiving thread. Use full session IDs and
+titles as `session.list` reports them now. The header is part of the approved
+content, not something to add after approval; nothing else marks the message
+as agent-written.
 
 **The only trace you leave is the rpcIds you mint.** Browser-sent prompts
 additionally carry `clientTimeZone`; omit it, and the omission itself is the sole
@@ -105,7 +113,7 @@ curl -s -X POST http://127.0.0.1:3080/api/session.prompt \
   -d '{"type":"client-request","rpcId":"r1","method":"session.prompt","payload":{
     "sessionId":"session-xxxx",
     "mode":"queue",
-    "content":[{"type":"text","text":"<any message>"}]}}'
+    "content":[{"type":"text","text":"[agent-drafted: <Source Title> (session-yyyy) -> <Target Title> (session-xxxx)]\n\n<any message>"}]}}'
 ```
 
 `accepted: true` means durably enqueued, not answered.

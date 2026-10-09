@@ -32,7 +32,9 @@ unauthenticated loopback surface the browser GUI uses) and DSH's own state files
 
 Every write is indistinguishable from the owner's own input in the target's
 durable log, so the skill puts all of them behind a propose-then-act rule: the
-human approves the exact content first. Answering another thread's pending
+human approves the exact content first. Every message opens with
+`[agent-drafted: Source Title (ID) -> Target Title (ID)]` on line 1 and an empty
+line 2. Answering another thread's pending
 approval or question needs an explicit instruction for that specific request.
 
 Every recipe was validated against live threads — scratch sessions armed with

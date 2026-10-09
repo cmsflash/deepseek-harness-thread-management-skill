@@ -48,7 +48,8 @@ frame is the complete snapshot:
 `{placement: "queued"|"steering"|"context", id, message}`.
 
 ```sh
-# edit a still-pending queued message (content replaces wholesale)
+# edit a still-pending queued message (content replaces wholesale; keep the
+# [agent-drafted: …] header from SKILL.md on line 1)
 curl -s -X POST $API/session.updateQueue -H 'Content-Type: application/json' -d '{"type":"client-request","rpcId":"q1","method":"session.updateQueue","payload":{"sessionId":"<id>","itemId":"<msg uuid>","action":{"kind":"edit","content":[{"type":"text","text":"replacement"}]}}}'
 # remove a pending message
 #   same shape with "action":{"kind":"remove"}
