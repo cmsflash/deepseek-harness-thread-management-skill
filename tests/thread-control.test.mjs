@@ -148,12 +148,12 @@ async function fixture(t, options = {}) {
   return { origin, authFile, directory, requests, opens, handshakes, wsServer, children }
 }
 
-async function run(env, script, args) {
+async function run(env, script, args, extraEnv = {}) {
   const child = spawn(process.execPath, [join(root, 'scripts', script), ...args,
     '--base-url', env.origin, '--auth-file', env.authFile], {
     cwd: root,
     env: { PATH: process.env.PATH, HOME: env.directory, DSH_ROOT: dshRoot,
-      DSH_WEB_URL: env.origin, DSH_RPC_AUTH_FILE: env.authFile },
+      DSH_WEB_URL: env.origin, DSH_RPC_AUTH_FILE: env.authFile, ...extraEnv },
     stdio: ['ignore', 'pipe', 'pipe'],
   })
   env.children.add(child)
@@ -583,5 +583,110 @@ test('fork with archive-original fails when the archive receipt does not list th
       assert.notEqual(result.code, 0)
       assert.match(result.stderr, /BAD_RECEIPT/u)
     }
+  })
+})
+
+const sourceId = 'session-fixture-source'
+const header = `[agent-drafted: Fixture Manager (${sourceId}) -> Fixture Report (${sessionId})]`
+const titled = { items: [
+  { sessionId, running: false, projections: { kind: 'cached', asOfSeq: 1, values: { title: 'Fixture Report' } } },
+  { sessionId: sourceId, running: true, projections: { kind: 'sequenced', asOfSeq: 1, values: { title: 'Fixture Manager' } } },
+] }
+const textContent = text => [{ type: 'text', text }]
+const promptArgs = text => JSON.stringify({ request: { requestId: 'fixture-request', sessionId, mode: 'steer', content: textContent(text) } })
+
+async function send(t, args, { list = titled, source = sourceId } = {}) {
+  const writes = []
+  const env = await fixture(t, { list, rpc(envelope, response) {
+    writes.push(envelope.payload.args)
+    json(response, { accepted: true })
+  } })
+  const result = await run(env, 'rpc.mjs', ['call', ...args], source ? { DSH_SESSION_ID: source } : {})
+  return { result, writes, urls: env.requests.map(request => request.url) }
+}
+
+test('a prompt with the exact header is sent once, after one session/list read', { timeout: 10_000 }, async t => {
+  const { result, writes, urls } = await send(t, ['session/prompt', promptArgs(`${header}\n\nCarry on.`)])
+  assert.equal(result.code, 0, result.stderr)
+  assert.deepEqual(JSON.parse(result.stdout), { accepted: true })
+  assert.deepEqual(urls, ['/api/session/list', '/api/session/prompt'])
+  assert.equal(writes[0].request.content[0].text, `${header}\n\nCarry on.`)
+})
+
+test('a missing, stale or misplaced header is refused before any write', { timeout: 20_000 }, async t => {
+  for (const [name, text] of [
+    ['old free-text label', 'Agent-drafted from Fixture Manager. Carry on.'],
+    ['stale target title', `[agent-drafted: Fixture Manager (${sourceId}) -> Old Title (${sessionId})]\n\nCarry on.`],
+    ['wrong source session', `[agent-drafted: Fixture Manager (session-other) -> Fixture Report (${sessionId})]\n\nCarry on.`],
+    ['no empty line 2', `${header}\nCarry on.`],
+    ['no message after the header', `${header}\n\n`],
+    ['header after another line', `Note.\n${header}\n\nCarry on.`],
+  ]) await t.test(name, async t => {
+    const { result, urls } = await send(t, ['session/prompt', promptArgs(text)])
+    assert.equal(result.code, 1)
+    assert.match(result.stderr, /^BAD_HEADER: Nothing was sent\./u)
+    assert.ok(result.stderr.includes(header), result.stderr)
+    assert.deepEqual(urls, ['/api/session/list'])
+  })
+})
+
+test('queue edits and subagent prompts are checked; removals and other endpoints are not', { timeout: 20_000 }, async t => {
+  const edit = text => JSON.stringify({ request: { sessionId, itemId: 'fixture-item', action: { kind: 'edit', content: textContent(text) } } })
+  const child = text => JSON.stringify({ request: { requestId: 'fixture-request', parentSessionId: sourceId,
+    childSessionId: sessionId, mode: 'continuable', delivery: 'queue', content: textContent(text) } })
+  for (const [name, args, sent] of [
+    ['unheaded queue edit', ['session/updateQueue', edit('Carry on.')], false],
+    ['headed queue edit', ['session/updateQueue', edit(`${header}\n\nCarry on.`)], true],
+    ['unheaded subagent prompt', ['subagents/prompt', child('Carry on.')], false],
+    ['headed subagent prompt', ['subagents/prompt', child(`${header}\n\nCarry on.`)], true],
+    ['queue removal', ['session/updateQueue', JSON.stringify({ request: { sessionId, itemId: 'fixture-item', action: { kind: 'remove' } } })], true],
+    ['rename', ['session/rename', JSON.stringify({ request: { sessionId, title: 'Renamed' } })], true],
+  ]) await t.test(name, async t => {
+    const { result, urls } = await send(t, args)
+    assert.equal(result.code, sent ? 0 : 1, result.stderr)
+    const checked = name !== 'queue removal' && name !== 'rename'
+    assert.deepEqual(urls, [...checked ? ['/api/session/list'] : [], ...sent ? [`/api/${args[0]}`] : []])
+  })
+})
+
+test('a sender outside a DSH thread is not checked', { timeout: 10_000 }, async t => {
+  const { result, urls } = await send(t, ['session/prompt', promptArgs('Continue.')], { source: '' })
+  assert.equal(result.code, 0, result.stderr)
+  assert.deepEqual(urls, ['/api/session/prompt'])
+})
+
+test('a source thread on another Host may name itself, but the target must still match', { timeout: 20_000 }, async t => {
+  const remote = 'session-fixture-remote'
+  const target = `(${remote}) -> Fixture Report (${sessionId})]`
+  for (const [name, line1, sent] of [
+    ['any non-empty source title', `[agent-drafted: Remote Manager ${target}`, true],
+    ['empty source title', `[agent-drafted:  ${target}`, false],
+    ['stale target title', `[agent-drafted: Remote Manager (${remote}) -> Old Title (${sessionId})]`, false],
+  ]) await t.test(name, async t => {
+    const { result, urls } = await send(t, ['session/prompt', promptArgs(`${line1}\n\nCarry on.`)], { source: remote })
+    assert.equal(result.code, sent ? 0 : 1, result.stderr)
+    assert.equal(urls.length, sent ? 2 : 1)
+  })
+})
+
+test('an unknown target refuses before any write', { timeout: 10_000 }, async t => {
+  const { result, urls } = await send(t, ['session/prompt', promptArgs(`${header}\n\nCarry on.`)], { list: { items: [titled.items[1]] } })
+  assert.equal(result.code, 1)
+  assert.match(result.stderr, /^UNKNOWN_TARGET: Nothing was sent\./u)
+  assert.deepEqual(urls, ['/api/session/list'])
+})
+
+test('an untitled thread may be named by any non-empty text, with its session ID still checked', { timeout: 20_000 }, async t => {
+  const untitled = { sessionId, running: false }
+  for (const [name, line1, sent] of [
+    ['any target text', `[agent-drafted: Fixture Manager (${sourceId}) -> Planned Title (${sessionId})]`, true],
+    ['blank target text', `[agent-drafted: Fixture Manager (${sourceId}) ->   (${sessionId})]`, false],
+    ['wrong target session', `[agent-drafted: Fixture Manager (${sourceId}) -> Planned Title (session-other)]`, false],
+  ]) await t.test(name, async t => {
+    const { result, urls } = await send(t, ['session/prompt', promptArgs(`${line1}\n\nCarry on.`)],
+      { list: { items: [untitled, titled.items[1]] } })
+    assert.equal(result.code, sent ? 0 : 1, result.stderr)
+    if (!sent) assert.ok(result.stderr.includes(`-> <target title> (${sessionId})]`), result.stderr)
+    assert.equal(urls.length, sent ? 2 : 1)
   })
 })

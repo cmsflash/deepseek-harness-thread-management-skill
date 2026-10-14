@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 import { readFile } from 'node:fs/promises'
 import { parseArgs } from 'node:util'
+import { checkAgentHeader } from './agent-header.mjs'
 import { RpcClient, RpcError } from './rpc-client.mjs'
 
 let client
@@ -24,7 +25,9 @@ try {
 Options: --base-url ORIGIN --auth-file FILE --timeout-ms 30000
 Default origin: DSH_WEB_URL, otherwise http://127.0.0.1:3080.
 Only use operator-approved launch output. Credentials are never printed.
-Every write still requires approval of the exact action and content.`)
+Every write still requires approval of the exact action and content.
+When DSH_SESSION_ID is set, session/prompt, subagents/prompt and queue edits
+are refused unless line 1 is the exact [agent-drafted: ...] header.`)
   } else {
     client = new RpcClient({ baseUrl: values['base-url'], authFile: values['auth-file'],
       timeoutMs: Number(values['timeout-ms'] || 30_000) })
@@ -46,7 +49,10 @@ Every write still requires approval of the exact action and content.`)
         throw new RpcError('BAD_ARGUMENTS', 'Supply an endpoint and at most one named-arguments input.')
       }
       const args = JSON.parse(values['args-file'] ? await readFile(values['args-file'], 'utf8') : json || '{}')
-      if (action === 'call') print(await client.request(endpoint, args))
+      if (action === 'call') {
+        await checkAgentHeader(client, endpoint, args, process.env.DSH_SESSION_ID)
+        print(await client.request(endpoint, args))
+      }
       else {
         const max = Number(values['max-items'] || 1)
         if (!Number.isSafeInteger(max) || max < 1) throw new RpcError('BAD_ARGUMENTS', 'max-items must be a positive integer.')

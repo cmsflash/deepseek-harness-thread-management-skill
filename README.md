@@ -12,7 +12,8 @@ for that request. The helpers do not retry requests automatically.
 
 Every message sent to another thread opens with
 `[agent-drafted: Source Title (ID) -> Target Title (ID)]` on line 1 and an empty
-line 2.
+line 2. From inside a DSH thread, `rpc.mjs` refuses a prompt or queue edit whose
+header is missing or stale, and prints the expected line.
 
 ## Setup
 
@@ -104,6 +105,7 @@ ln -s ~/.agents/skills/deepseek-harness-thread-management ~/.claude/skills/deeps
 | [unarchive-discussion-draft.md](references/unarchive-discussion-draft.md) | Historical unposted artifact; not current API guidance |
 | [rpc-client.mjs](scripts/rpc-client.mjs) | Shared authenticated HTTP and Remote-stream client |
 | [rpc.mjs](scripts/rpc.mjs) | Login, unary calls, bounded streams, and liveness probe |
+| [agent-header.mjs](scripts/agent-header.mjs) | Header check before `rpc.mjs` sends a prompt or queue edit |
 | [read-last-reply.mjs](scripts/read-last-reply.mjs) | Cold-safe committed-cut reply reader |
 | [wait-for-turn-end.mjs](scripts/wait-for-turn-end.mjs) | Running-target turn watcher |
 | [respond.mjs](scripts/respond.mjs) | Bounded pending-event observation and explicitly authorized responses |

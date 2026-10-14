@@ -68,7 +68,7 @@ WebSocket queue.
 After approval, edit, remove, or promote one still-pending message:
 
 ```sh
-node scripts/rpc.mjs call session/updateQueue '{"request":{"sessionId":"<session ID>","itemId":"<message ID>","action":{"kind":"edit","content":[{"type":"text","text":"<exact approved replacement>"}]}}}'
+node scripts/rpc.mjs call session/updateQueue '{"request":{"sessionId":"<session ID>","itemId":"<message ID>","action":{"kind":"edit","content":[{"type":"text","text":"[agent-drafted: <Source Title> (<your session ID>) -> <Target Title> (<session ID>)]\n\n<exact approved replacement>"}]}}}'
 node scripts/rpc.mjs call session/updateQueue '{"request":{"sessionId":"<session ID>","itemId":"<message ID>","action":{"kind":"remove"}}}'
 node scripts/rpc.mjs call session/updateQueue '{"request":{"sessionId":"<session ID>","itemId":"<message ID>","action":{"kind":"steer"}}}'
 ```
@@ -175,7 +175,7 @@ After approval, a continuable child's prompt uses a nested request with its own
 required `requestId` and explicit `delivery`:
 
 ```sh
-node scripts/rpc.mjs call subagents/prompt '{"request":{"requestId":"<fresh prompt UUID>","parentSessionId":"<parent session ID>","childSessionId":"<child session ID>","mode":"continuable","delivery":"queue","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"<exact approved message>"}]}}'
+node scripts/rpc.mjs call subagents/prompt '{"request":{"requestId":"<fresh prompt UUID>","parentSessionId":"<parent session ID>","childSessionId":"<child session ID>","mode":"continuable","delivery":"queue","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (<your session ID>) -> <Child Title> (<child session ID>)]\n\n<exact approved message>"}]}}'
 ```
 
 Use `delivery:"steer"` only for explicitly authorized steering. Prompt delivery

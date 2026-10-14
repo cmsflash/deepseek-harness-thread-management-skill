@@ -21,9 +21,15 @@ edit you send is exactly
 `[agent-drafted: <Source Title> (<source session ID>) -> <Target Title> (<target session ID>)]`,
 line 2 is empty, and the message starts on line 3. Source is your own thread
 (`$DSH_SESSION_ID`); target is the receiving thread. Use full session IDs and
-titles as `session/list` reports them now. The header is part of the approved
-content, not something to add after approval. Transport metadata is not an
-authorship label, so never omit the header.
+titles as `session/list` reports them now, from each item's
+`projections.values.title`. The header is part of the approved content, not
+something to add after approval. Transport metadata is not an authorship label,
+so never omit the header. When `DSH_SESSION_ID` is set, `rpc.mjs call` refuses
+`session/prompt`, `subagents/prompt` and queue edits whose header is missing or
+stale, sends nothing, and prints the exact line 1 expected. A thread with no
+title yet may be named by any non-empty text; its session ID is still checked.
+This header replaces any other label: do not add one, and do not tell a Report
+to use another.
 
 **Never answer a pending approval or question without explicit human
 authorization for that exact request and response.** A cached login, another
@@ -70,8 +76,9 @@ node scripts/rpc.mjs stream workspace/follow '{}' --max-items 1
 ```
 
 `session/list` returns `items` with `sessionId`, `running`, `blank`, origin, and
-available projection hints, including the title. Archived sessions can remain
-in this listing. Cached projection values and their `asOfSeq` may be stale.
+available projection hints. The title is `projections.values.title`; an item
+has no top-level `title`. Archived sessions can remain in this listing. Cached
+projection values and their `asOfSeq` may be stale.
 
 `workspace/follow` starts with `{type:"baseline",value:{items,archivedSessionIds}}`.
 Union the workspaces' `sessionIds` to obtain the owned set; subtract
@@ -139,7 +146,8 @@ node scripts/rpc.mjs call session/prompt '{"request":{"requestId":"<fresh prompt
 `request.requestId` is required and identifies the accepted prompt. It is
 separate from the transport `rpcId` minted by the client. Keep the prompt ID if
 you need to correlate a later turn. `{accepted:true}` acknowledges inbox
-admission, not a reply.
+admission, not a reply. `BAD_HEADER` means nothing was sent: fix line 1 to the
+printed line and send again with a fresh `requestId`.
 
 Use `queue` for the next available turn. Use `steer` only when the human intends
 to change a running turn at its next step. Cancellation does not clear pending
