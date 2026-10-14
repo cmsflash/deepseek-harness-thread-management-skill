@@ -162,7 +162,9 @@ export class RpcClient {
     const headers = response.headers.getSetCookie()
     const cookieHeader = headers.find(header => /^dsh-auth-/u.test(header))
     const location = response.headers.get('location')
-    if (response.status !== 303 || location !== '/' || !cookieHeader || headers.length !== 1) {
+    const target = location === null ? null : new URL(location, launchUrl)
+    const toRoot = target?.origin === this.origin && target.pathname === '/' && target.search === ''
+    if (response.status !== 303 || !toRoot || !cookieHeader || headers.length !== 1) {
       await response.body?.cancel()
       throw new RpcError('LOGIN_REJECTED', `Login exchange rejected (HTTP ${response.status}); use the current startup URL.`, response.status)
     }
