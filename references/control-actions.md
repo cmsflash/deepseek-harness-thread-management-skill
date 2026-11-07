@@ -178,10 +178,11 @@ A continuable child's prompt, sent on the same terms as any message, uses a
 nested request with its own required `requestId` and explicit `delivery`:
 
 ```sh
-node scripts/rpc.mjs call subagents/prompt '{"request":{"requestId":"<fresh prompt UUID>","parentSessionId":"<parent session ID>","childSessionId":"<child session ID>","mode":"continuable","delivery":"queue","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (<your session ID>) -> <Child Title> (<child session ID>)]\n\n<message>"}]}}'
+node scripts/rpc.mjs call subagents/prompt '{"request":{"requestId":"<fresh prompt UUID>","parentSessionId":"<parent session ID>","childSessionId":"<child session ID>","mode":"continuable","delivery":"steer","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (<your session ID>) -> <Child Title> (<child session ID>)]\n\n<message>"}]}}'
 ```
 
-Use `delivery:"steer"` only for explicitly authorized steering. Prompt delivery
+Use `delivery:"steer"`, as for `session/prompt`
+([Prompt the target](../SKILL.md#prompt-the-target)). Prompt delivery
 requires the exact live direct parent and a resumable child; naming a parent
 is not a credential or a way around delegated authority. A returned `messageId`
 means the child's inbox accepted the message, not that it finished.

@@ -17,7 +17,9 @@ automatically.
 Every message sent to another thread opens with
 `[agent-drafted: Source Title (ID) -> Target Title (ID)]` on line 1 and an empty
 line 2. From inside a DSH thread, `rpc.mjs` refuses a prompt or queue edit whose
-header is missing or stale, and prints the expected line.
+header is missing or stale, and prints the expected line. Send with
+`mode: "steer"`, so the message lands at the target's next step instead of
+waiting for its whole turn to end.
 
 ## Setup
 

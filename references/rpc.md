@@ -93,11 +93,11 @@ methods in `request` indiscriminately.
 |---|---|
 | `session/list` | `{ "_request": {} }` |
 | `session/page` | `{ "request": { "address": { "kind": "session", "sessionId": "..." }, "throughSeq": 123, "maxMessages": 8, "stepDetail": "collapsed" } }` |
-| `session/prompt` | `{ "request": { "requestId": "...", "sessionId": "...", "mode": "queue", "content": [...] } }` |
+| `session/prompt` | `{ "request": { "requestId": "...", "sessionId": "...", "mode": "steer", "content": [...] } }` |
 | `workspace/unarchiveSession` | `{ "request": { "sessionId": "..." } }` |
 | `commands/execute` | `{ "agentId": "...", "line": "...", "submittedAttachments": [] }` |
 | `subagents/list` | `{ "parentSessionId": "..." }` |
-| `subagents/prompt` | `{ "request": { "requestId": "...", "parentSessionId": "...", "childSessionId": "...", "mode": "continuable", "delivery": "queue", "content": [...] } }` |
+| `subagents/prompt` | `{ "request": { "requestId": "...", "parentSessionId": "...", "childSessionId": "...", "mode": "continuable", "delivery": "steer", "content": [...] } }` |
 | `subagents/interruptByParent` | `{ "childSessionId": "...", "parentSessionId": "...", "mode": "continuable" }` |
 
 The page cursor `123` is illustrative; supply an exact known committed cut.

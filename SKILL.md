@@ -150,7 +150,7 @@ Once the human has asked for the message, or approved your draft of it, send it
 with the header:
 
 ```sh
-node scripts/rpc.mjs call session/prompt '{"request":{"requestId":"<fresh prompt UUID>","sessionId":"session-xxxx","mode":"queue","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (session-yyyy) -> <Target Title> (session-xxxx)]\n\n<message>"}]}}'
+node scripts/rpc.mjs call session/prompt '{"request":{"requestId":"<fresh prompt UUID>","sessionId":"session-xxxx","mode":"steer","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (session-yyyy) -> <Target Title> (session-xxxx)]\n\n<message>"}]}}'
 ```
 
 `request.requestId` is required and identifies the accepted prompt. It is
@@ -159,10 +159,13 @@ you need to correlate a later turn. `{accepted:true}` acknowledges inbox
 admission, not a reply. `BAD_HEADER` means nothing was sent: fix line 1 to the
 printed line and send again with a fresh `requestId`.
 
-Use `queue` for the next available turn. Use `steer` only when the human intends
-to change a running turn at its next step. Cancellation does not clear pending
-inbox work; an unconsumed message can still affect a later turn. Inspect and
-propose any needed queue removal separately.
+Send with `mode: "steer"`, not `"queue"` (Zhuoran, Oct 7). Steer lands at the
+target's next step boundary, after any tool call in progress finishes; on an
+idle thread it starts a turn as queue does. A queued message waits for the
+target's whole running turn to end, which can take hours on a monitoring
+thread. Use `queue` only when the human asks for it. Cancellation does not
+clear pending inbox work; an unconsumed message can still affect a later turn.
+Inspect and propose any needed queue removal separately.
 
 A leading slash in a prompt is ordinary model input. Run slash commands through
 `commands/execute`, not `session/prompt`; see [Control actions](references/control-actions.md).
