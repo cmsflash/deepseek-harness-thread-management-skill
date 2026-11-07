@@ -5,10 +5,14 @@ its authenticated local Host API. It covers thread discovery, bounded reply
 reads, prompting, lifecycle changes, pending interactions, session counts, and
 waiting for a running turn to end.
 
-**Propose, then act.** Before any write, get the human's approval of the exact
-target, action, and content. Authentication grants API access, not permission to
-act. Never answer a pending approval or question without explicit authorization
-for that request. The helpers do not retry requests automatically.
+**Send what the human asks for.** When the human asks you to message a thread,
+send it without a review round. Draft the message for approval only when it goes
+to a colleague, or when neither the human nor another skill (such as
+thread-organization) asked for it. Other writes need the human's request or
+approval of the exact target and action. Authentication grants API access, not
+permission to act. Never answer a pending approval or question without explicit
+authorization for that request. The helpers do not retry requests
+automatically.
 
 Every message sent to another thread opens with
 `[agent-drafted: Source Title (ID) -> Target Title (ID)]` on line 1 and an empty

@@ -4,10 +4,12 @@ Use the authenticated client and named-argument envelopes in
 [Authenticated RPC](rpc.md). Run examples from the skill directory after
 selecting and authenticating the authorized Host.
 
-**Propose, then act.** Get human approval of the exact target, action, and
-content before any write. `rpc.mjs call` sends immediately; it has no dry-run
-mode. Authentication is not permission to act. Every prompt and queue edit
-carries the `[agent-drafted: …]` header from [SKILL.md](../SKILL.md#standing-rules).
+**Who authorizes a write** is set by the [standing rules](../SKILL.md#standing-rules):
+a message the human asked for goes out without review, and other writes need
+the human's request or approval of the exact target, action, and content.
+`rpc.mjs call` sends immediately; it has no dry-run mode. Authentication is not
+permission to act. Every prompt and queue edit carries the `[agent-drafted: …]`
+header from [SKILL.md](../SKILL.md#standing-rules).
 The listing and observation examples below are reads, not permission to perform
 their adjacent writes.
 
@@ -172,11 +174,11 @@ The reader confirms the child is listed under that parent, takes the child's
 committed cursor from its own export, and pages it through the `subagent`
 address. Without `--parent` it refuses a child with `SUBAGENT_ADDRESS`.
 
-After approval, a continuable child's prompt uses a nested request with its own
-required `requestId` and explicit `delivery`:
+A continuable child's prompt, sent on the same terms as any message, uses a
+nested request with its own required `requestId` and explicit `delivery`:
 
 ```sh
-node scripts/rpc.mjs call subagents/prompt '{"request":{"requestId":"<fresh prompt UUID>","parentSessionId":"<parent session ID>","childSessionId":"<child session ID>","mode":"continuable","delivery":"queue","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (<your session ID>) -> <Child Title> (<child session ID>)]\n\n<exact approved message>"}]}}'
+node scripts/rpc.mjs call subagents/prompt '{"request":{"requestId":"<fresh prompt UUID>","parentSessionId":"<parent session ID>","childSessionId":"<child session ID>","mode":"continuable","delivery":"queue","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (<your session ID>) -> <Child Title> (<child session ID>)]\n\n<message>"}]}}'
 ```
 
 Use `delivery:"steer"` only for explicitly authorized steering. Prompt delivery

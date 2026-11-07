@@ -25,7 +25,7 @@ try {
 Options: --base-url ORIGIN --auth-file FILE --timeout-ms 30000
 Default origin: DSH_WEB_URL, otherwise http://127.0.0.1:3080.
 Only use operator-approved launch output. Credentials are never printed.
-Every write still requires approval of the exact action and content.
+A write needs the human's request or approval (see SKILL.md standing rules).
 When DSH_SESSION_ID is set, session/prompt, subagents/prompt and queue edits
 are refused unless line 1 is the exact [agent-drafted: ...] header.`)
   } else {

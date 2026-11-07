@@ -162,9 +162,10 @@ limit or truncated export fails rather than accepting a partial cursor.
 
 ## Safety and verification
 
-Every write requires approval of the exact target, action, and content.
-Authentication alone does not authorize prompting, cancellation, lifecycle
-changes, or answers to another thread's pending interaction.
+A write needs the human's request or approval, as the
+[standing rules](../SKILL.md#standing-rules) describe. Authentication alone does
+not authorize prompting, cancellation, lifecycle changes, or answers to another
+thread's pending interaction.
 
 `rpc.mjs probe` treats any HTTP response, including 401 or 403, as a live server.
 Only a definite refused connection returns `running:false`; ambiguous network
