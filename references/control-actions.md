@@ -21,7 +21,7 @@ truncated display ID. These calls use `payload.args.request`:
 ```sh
 node scripts/rpc.mjs call session/create '{"request":{"sessionId":"session-<fresh UUID>","workspaceId":"<full workspace ID>"}}'
 node scripts/rpc.mjs call session/fork '{"request":{"sessionId":"<source session ID>"}}'
-node scripts/rpc.mjs call session/selectModel '{"request":{"sessionId":"<session ID>","provider":"anthropic","model":"claude-opus-5-5","reasoningEffort":"max"}}'
+node scripts/rpc.mjs call session/selectModel '{"request":{"sessionId":"<session ID>","provider":"anthropic","model":"claude-fable-5-2","reasoningEffort":"xhigh"}}'
 node scripts/rpc.mjs call session/rename '{"request":{"sessionId":"<session ID>","title":"<exact approved title>"}}'
 node scripts/rpc.mjs call workspace/archiveSession '{"request":{"sessionId":"<session ID>"}}'
 node scripts/rpc.mjs call workspace/unarchiveSession '{"request":{"sessionId":"<session ID>"}}'
