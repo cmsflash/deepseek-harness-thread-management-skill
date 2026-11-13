@@ -690,3 +690,95 @@ test('an untitled thread may be named by any non-empty text, with its session ID
     assert.equal(urls.length, sent ? 2 : 1)
   })
 })
+
+const parentOf = (t, { reply, status = 200, text } = {}) => fixture(t, { rpc(envelope, response) {
+  assert.equal(envelope.method, 'workspace/setSessionParent')
+  if (text !== undefined) response.writeHead(status, { 'content-type': 'text/plain;charset=UTF-8' }).end(text)
+  else response.writeHead(status, { 'content-type': 'application/json' }).end(JSON.stringify({ result: reply(envelope.payload.args.request) }))
+} })
+const setParent = (env, args, source = sourceId) => run(env, 'set-parent.mjs', args, source ? { DSH_SESSION_ID: source } : {})
+const linked = extra => request => ({ ok: true, value: { sessionParents: {
+  ...extra, ...request.parentSessionId === null ? {} : { [request.sessionId]: request.parentSessionId },
+} } })
+
+test('set-parent nests a thread under the calling thread and prints only that link', { timeout: 10_000 }, async t => {
+  const env = await parentOf(t, { reply: linked({ 'session-unrelated-child': 'session-unrelated-parent' }) })
+  const result = await setParent(env, [sessionId])
+  assert.deepEqual(report(result), { status: 'nested', sessionId, parentSessionId: sourceId })
+  assert.ok(!result.stdout.includes('session-unrelated'), result.stdout)
+  assert.deepEqual(env.requests.map(request => request.url), ['/api/workspace/setSessionParent'])
+  assert.deepEqual(JSON.parse(env.requests[0].body).payload, { args: { request: { sessionId, parentSessionId: sourceId } } })
+})
+
+test('set-parent sends an explicit parent as given and a clear as null', { timeout: 20_000 }, async t => {
+  for (const [name, args, parentSessionId, expected] of [
+    ['explicit parent', [sessionId, '--parent', 'session-fixture-other'], 'session-fixture-other',
+      { status: 'nested', sessionId, parentSessionId: 'session-fixture-other' }],
+    ['clear', [sessionId, '--clear'], null, { status: 'cleared', sessionId }],
+    ['explicit parent outside a DSH thread', [sessionId, '--parent', 'session-fixture-other'], 'session-fixture-other',
+      { status: 'nested', sessionId, parentSessionId: 'session-fixture-other' }, ''],
+  ]) await t.test(name, async t => {
+    const env = await parentOf(t, { reply: linked({}) })
+    assert.deepEqual(report(await setParent(env, args, name.endsWith('thread') ? '' : sourceId)), expected)
+    assert.deepEqual(JSON.parse(env.requests[0].body).payload.args, { request: { sessionId, parentSessionId } })
+    assert.equal(env.requests.length, 1)
+  })
+})
+
+test('set-parent reports a Host without the endpoint as unsupported, once, without failing', { timeout: 10_000 }, async t => {
+  const env = await parentOf(t, { status: 404, text: 'not found' })
+  const result = report(await setParent(env, [sessionId]))
+  assert.equal(result.status, 'unsupported')
+  assert.equal(result.sessionId, sessionId)
+  assert.match(result.note, /HTTP 404.*Nothing changed.*say so in your update/u)
+  assert.equal(env.requests.length, 1)
+})
+
+test('set-parent passes a Host refusal through with its code and message and exits 1', { timeout: 20_000 }, async t => {
+  for (const [code, message] of [
+    ['workspace/session-parent-invalid', `cannot nest session '${sessionId}' under '${sourceId}': the sessions belong to different workspaces`],
+    ['session/not-found', `session '${sessionId}' not found`],
+    ['gateway/internal', 'workspace/setSessionParent is not served yet: the Workspace registry stores no Session parents'],
+  ]) await t.test(code, async t => {
+    const env = await parentOf(t, { reply: () => ({ ok: false, error: { code, message, details: {} } }) })
+    const result = await setParent(env, [sessionId])
+    assert.equal(result.code, 1)
+    assert.equal(result.stderr, `${code}: ${message}\n`)
+    assert.equal(result.stdout, '')
+    assert.equal(env.requests.length, 1)
+  })
+})
+
+test('set-parent treats other HTTP failures and unconfirming receipts as errors, not as unsupported', { timeout: 20_000 }, async t => {
+  for (const [name, options, args, pattern] of [
+    ['HTTP 500', { status: 500, text: 'failure' }, [sessionId], /^HTTP_ERROR: RPC returned HTTP 500\./u],
+    ['nest receipt without the link', { reply: () => ({ ok: true, value: { sessionParents: {} } }) }, [sessionId], /^BAD_RECEIPT: /u],
+    ['nest receipt naming another parent', { reply: () => ({ ok: true, value: { sessionParents: { [sessionId]: 'session-fixture-other' } } }) }, [sessionId], /^BAD_RECEIPT: /u],
+    ['clear receipt still linked', { reply: () => ({ ok: true, value: { sessionParents: { [sessionId]: sourceId } } }) }, [sessionId, '--clear'], /^BAD_RECEIPT: /u],
+    ['receipt without a map', { reply: () => ({ ok: true, value: {} }) }, [sessionId, '--clear'], /^BAD_RECEIPT: /u],
+  ]) await t.test(name, async t => {
+    const env = await parentOf(t, options)
+    const result = await setParent(env, args)
+    assert.equal(result.code, 1)
+    assert.match(result.stderr, pattern)
+    assert.equal(result.stdout, '')
+    assert.equal(env.requests.length, 1)
+  })
+})
+
+test('set-parent rejects an incomplete or contradictory selection before network access', { timeout: 20_000 }, async t => {
+  const env = await parentOf(t, { reply: linked({}) })
+  for (const [args, source] of [
+    [[], sourceId],
+    [[sessionId, 'session-fixture-extra'], sourceId],
+    [[sessionId, '--parent', 'session-fixture-other', '--clear'], sourceId],
+    [[sessionId], ''],
+    [[sessionId, '--parent', ''], sourceId],
+  ]) {
+    const result = await setParent(env, args, source)
+    assert.equal(result.code, 1, JSON.stringify(args))
+    assert.match(result.stderr, /^BAD_ARGUMENTS: /u)
+    assert.equal(result.stdout, '')
+  }
+  assert.deepEqual(env.requests, [])
+})
