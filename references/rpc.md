@@ -95,6 +95,7 @@ methods in `request` indiscriminately.
 | `session/page` | `{ "request": { "address": { "kind": "session", "sessionId": "..." }, "throughSeq": 123, "maxMessages": 8, "stepDetail": "collapsed" } }` |
 | `session/prompt` | `{ "request": { "requestId": "...", "sessionId": "...", "mode": "steer", "content": [...] } }` |
 | `workspace/unarchiveSession` | `{ "request": { "sessionId": "..." } }` |
+| `workspace/setSessionParent` | `{ "request": { "sessionId": "<child>", "parentSessionId": "<parent>" } }`; `null` as the parent clears, and the key is required |
 | `commands/execute` | `{ "agentId": "...", "line": "...", "submittedAttachments": [] }` |
 | `subagents/list` | `{ "parentSessionId": "..." }` |
 | `subagents/prompt` | `{ "request": { "requestId": "...", "parentSessionId": "...", "childSessionId": "...", "mode": "continuable", "delivery": "steer", "content": [...] } }` |
@@ -103,7 +104,12 @@ methods in `request` indiscriminately.
 The page cursor `123` is illustrative; supply an exact known committed cut.
 Prompt `request.requestId` is required and separate from the outer `rpcId`.
 Queue and steer delivery, lifecycle writes, and pending-event results are
-covered in [Control actions](control-actions.md).
+covered in [Control actions](control-actions.md). Call
+`workspace/setSessionParent` through `set-parent.mjs`
+([Nest a thread](control-actions.md#nest-a-thread-under-another)): the raw
+value is every parent link on the Host, and a Host without the endpoint
+answers HTTP 404, which `rpc.mjs call` reports as
+`HTTP_ERROR: RPC returned HTTP 404. No retry was attempted.`
 
 The client returns `result.value` or fails with the RPC error code. The CLI
 prints `null` for an absent value. For `commands/execute`, an undefined value

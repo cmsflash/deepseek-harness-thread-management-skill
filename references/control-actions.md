@@ -39,6 +39,56 @@ Subagent children remain attached to the original, not the fork. Do not assume
 runtime model selection transfers; choose unarchive when preserving the
 original identity and state is the goal.
 
+## Nest a thread under another
+
+A thread may have one parent: the thread its row sits under in the sidebar.
+The link only places the row. It changes no title, order, archive state or
+session log, and no model sees it.
+
+```sh
+node scripts/set-parent.mjs <child session ID>
+node scripts/set-parent.mjs <child session ID> --parent <parent session ID>
+node scripts/set-parent.mjs <child session ID> --clear
+```
+
+Without `--parent`, the parent is the calling thread (`$DSH_SESSION_ID`).
+`--clear` returns the child to the top level of its project. The helper makes
+one `workspace/setSessionParent` call and prints one line of JSON:
+
+| `status` | Meaning |
+|---|---|
+| `nested` | The child now sits under that parent, replacing any earlier parent. |
+| `cleared` | The child has no parent. |
+| `unsupported` | This Host was built before the endpoint existed and answered HTTP 404. Nothing changed. |
+
+A refusal changes nothing, prints the Host's code and message, and exits 1:
+
+| Code, and what the message says | Meaning |
+|---|---|
+| `session/not-found` | No thread on this Host has the child's or the parent's ID. Check the ID and the Host origin. |
+| `workspace/session-parent-invalid`, "cannot be its own parent" | Child and parent are the same thread. |
+| the same code, "is a subagent session" | One of the two is a subagent child. Those belong to their own parent and take no part in nesting. |
+| the same code, "no workspace accounts for session" | The named thread is in no project: it was created with `cwd` rather than `workspaceId`, or its project was deleted. |
+| the same code, "belong to different workspaces" | Child and parent are in different projects, and a thread cannot change project. |
+| the same code, "is already an ancestor of" | The child sits above the parent, so the link would close a loop. |
+
+Nesting is never worth stopping for. After `unsupported` or a refusal, leave
+the thread where it is, continue the task, and say in your update that it is
+not nested, with the exact line. After `unsupported`, skip further nesting
+calls in that turn: a Host gains the endpoint only when it is upgraded and
+restarted. Do not recreate a thread to get around a refusal.
+
+Repeating the same nest or clear is a no-op on the Host, so after a timeout
+or `BAD_RECEIPT` send the same command again instead of inspecting state.
+Archiving either thread keeps the link.
+
+The raw call takes
+`{"request":{"sessionId":"<child>","parentSessionId":"<parent>"}}`, with
+`null` to clear, and returns every parent link on the Host; the helper keeps
+that map out of your context. To read the links, take `value.sessionParents`
+(child ID to parent ID) from the `workspace/follow` baseline. A Host without
+the endpoint omits that key.
+
 ## Cancel a turn
 
 ```sh

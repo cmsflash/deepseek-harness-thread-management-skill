@@ -2,8 +2,8 @@
 
 An agent skill for reading and managing DeepSeek Harness (DSH) threads through
 its authenticated local Host API. It covers thread discovery, bounded reply
-reads, prompting, lifecycle changes, pending interactions, session counts, and
-waiting for a running turn to end.
+reads, prompting, lifecycle changes, nesting, pending interactions, session
+counts, and waiting for a running turn to end.
 
 **Send what the human asks for.** When the human asks you to message a thread,
 send it without a review round. Draft the message for approval only when it goes
@@ -57,6 +57,9 @@ node scripts/respond.mjs session-xxxx --list
 node scripts/unarchive.mjs list
 node scripts/unarchive.mjs restore session-xxxx
 
+node scripts/set-parent.mjs session-xxxx
+node scripts/set-parent.mjs session-xxxx --clear
+
 python3 scripts/count-active-sessions.py
 python3 scripts/count-active-sessions.py --json
 ```
@@ -78,6 +81,11 @@ python3 scripts/count-active-sessions.py --json
   original session ID. No storage edit or server restart is needed. See
   [Restoring archived threads](references/unarchive.md) for validation and fork
   trade-offs.
+- Nesting sets or clears the thread a thread's row sits under in the sidebar,
+  through `workspace/setSessionParent`. Without `--parent` the parent is the
+  calling thread. The helper prints one line instead of the Host's complete
+  parent map, and reports a Host without the endpoint as `unsupported`
+  instead of failing. See [Control actions](references/control-actions.md).
 - Counts use workspace ownership minus the archive set, including blank
   sessions. That is neither a running-turn count nor an exact sidebar render
   count. Use [Counting sessions](references/counting.md) for the live baseline
@@ -105,7 +113,7 @@ ln -s ~/.agents/skills/deepseek-harness-thread-management ~/.claude/skills/deeps
 |---|---|
 | [SKILL.md](SKILL.md) | Safety rules, discovery, reading, prompting, and waiting |
 | [rpc.md](references/rpc.md) | Authentication, private cookie cache, named arguments, and Remote streams |
-| [control-actions.md](references/control-actions.md) | Lifecycle, cancel, queue, commands, approvals, and subagents |
+| [control-actions.md](references/control-actions.md) | Lifecycle, nesting, cancel, queue, commands, approvals, and subagents |
 | [counting.md](references/counting.md) | Live and file-based counts, populations, and interpretation |
 | [unarchive.md](references/unarchive.md) | Native restore, archive, fork, and dry-run safety |
 | [unarchive-discussion-draft.md](references/unarchive-discussion-draft.md) | Historical unposted artifact; not current API guidance |
@@ -116,6 +124,7 @@ ln -s ~/.agents/skills/deepseek-harness-thread-management ~/.claude/skills/deeps
 | [wait-for-turn-end.mjs](scripts/wait-for-turn-end.mjs) | Running-target turn watcher |
 | [respond.mjs](scripts/respond.mjs) | Bounded pending-event observation and explicitly authorized responses |
 | [unarchive.mjs](scripts/unarchive.mjs) | Recovery preview and native lifecycle writes |
+| [set-parent.mjs](scripts/set-parent.mjs) | Nest a thread under another, or clear its parent |
 | [count-active-sessions.py](scripts/count-active-sessions.py) | Counts from the local workspace registry |
 
 ## Validation

@@ -1,6 +1,6 @@
 ---
 name: deepseek-harness-thread-management
-description: "Read, prompt, control, count, recover, and wait on other DeepSeek Harness (DSH) threads through the authenticated local Host API and workspace registry. Use for another thread's latest reply, sending or steering a message, cancelling, renaming, forking, archiving or restoring a thread, running a slash command, explicitly authorized approval/question responses, session counts, or waiting for a running turn. Triggers include 'what did that thread say', 'tell it to', 'stop the other agent', 'unarchive', 'restore an archived thread', 'how many sessions', and 'wait for that thread'. A message the human asks for is sent without a review round; other writes need the human's request or approval."
+description: "Read, prompt, control, count, recover, and wait on other DeepSeek Harness (DSH) threads through the authenticated local Host API and workspace registry. Use for another thread's latest reply, sending or steering a message, cancelling, renaming, nesting, forking, archiving or restoring a thread, running a slash command, explicitly authorized approval/question responses, session counts, or waiting for a running turn. Triggers include 'what did that thread say', 'tell it to', 'stop the other agent', 'unarchive', 'restore an archived thread', 'how many sessions', and 'wait for that thread'. A message the human asks for is sent without a review round; other writes need the human's request or approval."
 ---
 
 # Manage DSH threads
@@ -60,8 +60,9 @@ quoted logs.
 
 - [Authenticated RPC](references/rpc.md): login, origin selection, wire shapes,
   dependencies, and failure handling. Read before using the Host API.
-- [Control actions](references/control-actions.md): lifecycle, queue, commands,
-  pending approvals/questions, and parent-addressed subagents.
+- [Control actions](references/control-actions.md): lifecycle, nesting a thread
+  under another, queue, commands, pending approvals/questions, and
+  parent-addressed subagents.
 - [Restoring archived threads](references/unarchive.md): native restore and
   dry-run recovery helpers.
 - [Counting sessions](references/counting.md): ownership, archive filtering,
