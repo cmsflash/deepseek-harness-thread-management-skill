@@ -58,7 +58,7 @@ one `workspace/setSessionParent` call and prints one line of JSON:
 | `status` | Meaning |
 |---|---|
 | `nested` | The child now sits under that parent, replacing any earlier parent. |
-| `cleared` | The child has no parent. |
+| `cleared` | The child has no parent. The Host checks nothing on a clear, so a mistyped ID or the wrong Host origin prints this too. |
 | `unsupported` | This Host was built before the endpoint existed and answered HTTP 404. Nothing changed. |
 
 A refusal changes nothing, prints the Host's code and message, and exits 1:
@@ -78,8 +78,10 @@ not nested, with the exact line. After `unsupported`, skip further nesting
 calls in that turn: a Host gains the endpoint only when it is upgraded and
 restarted. Do not recreate a thread to get around a refusal.
 
-Repeating the same nest or clear is a no-op on the Host, so after a timeout
-or `BAD_RECEIPT` send the same command again instead of inspecting state.
+Repeating the same nest or clear is a no-op on the Host, which makes this
+call an exception to "inspect state rather than resending". After
+`CONNECTION_FAILED` (a timeout prints it too) or `BAD_RECEIPT`, send the
+same command once more; if that fails as well, carry on as after a refusal.
 Archiving either thread keeps the link.
 
 The raw call takes
