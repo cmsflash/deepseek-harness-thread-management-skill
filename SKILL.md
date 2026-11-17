@@ -1,6 +1,6 @@
 ---
 name: deepseek-harness-thread-management
-description: "Read, prompt, control, count, recover, and wait on other DeepSeek Harness (DSH) threads through the authenticated local Host API and workspace registry. Use for another thread's latest reply, sending or steering a message, cancelling, renaming, nesting, forking, archiving or restoring a thread, running a slash command, explicitly authorized approval/question responses, session counts, or waiting for a running turn. Triggers include 'what did that thread say', 'tell it to', 'stop the other agent', 'unarchive', 'restore an archived thread', 'how many sessions', and 'wait for that thread'. A message the human asks for is sent without a review round; other writes need the human's request or approval."
+description: "Read, prompt, control, count, recover, and wait on other DeepSeek Harness (DSH) threads through the authenticated local Host API and workspace registry. Use for another thread's latest reply, sending or steering a message, cancelling, renaming, nesting, forking, archiving or restoring a thread, running a slash command, explicitly authorized approval/question responses, session counts, or waiting for a running turn. Triggers include 'what did that thread say', 'tell it to', 'stop the other agent', 'unarchive', 'restore an archived thread', 'how many sessions', and 'wait for that thread'. Messages to other DSH threads need no approval; other writes need the human's request or approval."
 ---
 
 # Manage DSH threads
@@ -11,16 +11,14 @@ your delegated authority. Use only the Host and targets authorized for the task.
 
 ## Standing rules
 
-**Send what the human asks for.** When the human explicitly asks you to message
-a thread ("tell X …", "inform X that …", "send it"), write the message and send
-it without showing it for review first (Zhuoran, Nov 6). Draft the exact
-message and wait for approval only when it goes to a colleague, or when nobody
-asked for it: neither the human nor another skill that authorizes it. For
-example, thread-organization lets a Manager brief, steer and correct its
-Reports, and a Report update its Manager.
+**Message other DSH threads freely.** Sending a prompt to another of Zhuoran's
+DSH threads needs no request, approval or review round, and has no limit
+(Zhuoran, Nov 17): reply to a thread that messaged you, coordinate, brief, steer
+or inform as the work needs. Draft the exact message and wait for approval only
+when it goes to a colleague.
 
 **Other writes need the human's request or approval.** Every write acts as the
-user in the target, messages included. Run a command, cancellation, queue edit,
+user in the target. Run a command, cancellation, queue edit,
 lifecycle change, or interaction response when the human asked for that exact
 action, or after proposing its exact target, action, and content and getting
 approval. An explicit request is the approval; do not ask again.
@@ -147,8 +145,7 @@ injections and raw assistant chunks out of a reply summary.
 
 ## Prompt the target
 
-Once the human has asked for the message, or approved your draft of it, send it
-with the header:
+Send the message with the header:
 
 ```sh
 node scripts/rpc.mjs call session/prompt '{"request":{"requestId":"<fresh prompt UUID>","sessionId":"session-xxxx","mode":"steer","clientTimeZone":"America/Los_Angeles","content":[{"type":"text","text":"[agent-drafted: <Source Title> (session-yyyy) -> <Target Title> (session-xxxx)]\n\n<message>"}]}}'
