@@ -22,15 +22,16 @@ try {
   rpc.mjs stream ENDPOINT [NAMED_ARGS_JSON | --args-file FILE] [--max-items 1]
   rpc.mjs probe
 
-Options: --base-url ORIGIN --auth-file FILE --timeout-ms 30000
+Options: --base-url ORIGIN --auth-file FILE --timeout-ms 120000
 Default origin: DSH_WEB_URL, otherwise http://127.0.0.1:3080.
+Default timeout: DSH_RPC_TIMEOUT_MS, otherwise 120000; a busy Host can take tens of seconds.
 Only use operator-approved launch output. Credentials are never printed.
 A write needs the human's request or approval (see SKILL.md standing rules).
 When DSH_SESSION_ID is set, session/prompt, subagents/prompt and queue edits
 are refused unless line 1 is the exact [agent-drafted: ...] header.`)
   } else {
     client = new RpcClient({ baseUrl: values['base-url'], authFile: values['auth-file'],
-      timeoutMs: Number(values['timeout-ms'] || 30_000) })
+      timeoutMs: values['timeout-ms'] === undefined ? undefined : Number(values['timeout-ms']) })
     const [action, endpoint, json] = positionals
     const print = value => console.log(client.redact(JSON.stringify(value ?? null)))
     if (action === 'login') {

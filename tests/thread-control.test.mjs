@@ -59,7 +59,8 @@ async function fixture(t, options = {}) {
       if (request.url === '/api/session/list') {
         assert.equal(envelope.method, 'session/list')
         assert.deepEqual(envelope.payload, { args: { _request: {} } })
-        json(response, options.list ?? { items: [{ sessionId, running: true }] })
+        if (typeof options.list === 'function') await options.list(response)
+        else json(response, options.list ?? { items: [{ sessionId, running: true }] })
       } else if (request.url === '/api/$events/result') {
         assert.equal(envelope.method, '$events/result')
         if (options.result) await options.result(envelope.payload.args, response, { wsServer, later })
@@ -313,7 +314,7 @@ test('waiter does not claim completion on timeout or a prematurely closed follow
       send(snapshot([event(0, 'turn/start', { turn: 1 })]))
       if (close) later(20, () => ws.close())
     } })
-    const result = await wait(env, ['--timeout-min', '0.004'])
+    const result = await wait(env)
     assert.equal(result.code, close ? 4 : 2)
     assert.match(result.stderr, close ? /STREAM_ENDED/u : /TIMEOUT/u)
     assert.equal(result.stdout, '')
@@ -674,6 +675,23 @@ test('an unknown target refuses before any write', { timeout: 10_000 }, async t 
   assert.equal(result.code, 1)
   assert.match(result.stderr, /^UNKNOWN_TARGET: Nothing was sent\./u)
   assert.deepEqual(urls, ['/api/session/list'])
+})
+
+test('a header check that cannot read session/list sends nothing and says so', { timeout: 20_000 }, async t => {
+  for (const [name, list, extra, pattern] of [
+    ['no answer by the deadline', () => {}, ['--timeout-ms', '1500'],
+      /^RESPONSE_TIMEOUT: Nothing was sent\. The header check got no complete session\/list response within 1\.5 s; the Host may be busy\.$/u],
+    ['a failed read', response => { response.writeHead(503).end() }, [],
+      /^HTTP_ERROR: Nothing was sent\. RPC returned HTTP 503\. No retry was attempted\.$/u],
+    ['a dropped connection', response => { response.destroy() }, [],
+      /^CONNECTION_FAILED: Nothing was sent\. The header check lost its connection while reading session\/list\.$/u],
+  ]) await t.test(name, async t => {
+    const { result, writes, urls } = await send(t, ['session/prompt', promptArgs(`${header}\n\nCarry on.`), ...extra], { list })
+    assert.equal(result.code, 1)
+    assert.match(result.stderr.trim(), pattern)
+    assert.deepEqual(writes, [])
+    assert.deepEqual(urls, ['/api/session/list'])
+  })
 })
 
 test('an untitled thread may be named by any non-empty text, with its session ID still checked', { timeout: 20_000 }, async t => {

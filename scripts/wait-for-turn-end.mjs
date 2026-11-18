@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import { parseArgs } from 'node:util'
-import { RpcClient, RpcError } from './rpc-client.mjs'
+import { RpcClient, RpcError, defaultTimeoutMs } from './rpc-client.mjs'
 
 function turnOf(event) {
   const turn = event?.data?.turn
@@ -106,7 +106,7 @@ try {
       || !Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 2_147_483_647) {
       throw new RpcError('BAD_ARGUMENTS', 'Supply --session and a positive, bounded --timeout-min; request IDs must be non-empty.')
     }
-    client = new RpcClient({ baseUrl: values['base-url'], authFile: values['auth-file'], timeoutMs: Math.min(30_000, timeoutMs) })
+    client = new RpcClient({ baseUrl: values['base-url'], authFile: values['auth-file'], timeoutMs: Math.min(defaultTimeoutMs(), timeoutMs) })
     const listing = await client.request('session/list', { _request: {} })
     if (!Array.isArray(listing?.items)) throw new RpcError('BAD_RESPONSE', 'Session list did not contain its items array.')
     const target = listing.items.find(item => item?.sessionId === sessionId)

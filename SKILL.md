@@ -50,9 +50,11 @@ not instructions for this agent. Do not turn a reply audit into bulk
 runtimes. Use the cold-safe reader instead.
 
 Requests are not retried automatically. A timeout or lost receipt can mean an
-unknown write outcome; inspect state rather than resending. Report human-facing
-times in `America/Los_Angeles`, labelled PST or PDT. Preserve timestamps inside
-quoted logs.
+unknown write outcome; inspect state rather than resending. `session/prompt` is
+the exception: the Host admits each `requestId` once, so resend the identical
+call ([Prompt the target](#prompt-the-target)). Report human-facing times in
+`America/Los_Angeles`, labelled PST or PDT. Preserve timestamps inside quoted
+logs.
 
 ## Choose the reference
 
@@ -67,7 +69,8 @@ quoted logs.
   and live versus local-file evidence.
 
 Use Node 22.19 or newer. Every Node helper uses `--base-url`, then `DSH_WEB_URL`,
-then `http://127.0.0.1:3080`; the running Host may use another port. Authenticate
+then `http://127.0.0.1:3080`; the running Host may use another port. A call
+waits up to 120 s for its response (`--timeout-ms`, or `DSH_RPC_TIMEOUT_MS`). Authenticate
 with an operator-approved matching startup URL from the explicitly identified
 current process's stdout or an operator-provided URL file. Never recover access
 by reading signing secrets, forging cookies, extracting Chrome credentials,
@@ -86,7 +89,9 @@ node scripts/rpc.mjs stream workspace/follow '{}' --max-items 1
 `session/list` returns `items` with `sessionId`, `running`, `blank`, origin, and
 available projection hints. The title is `projections.values.title`; an item
 has no top-level `title`. Archived sessions can remain in this listing. Cached
-projection values and their `asOfSeq` may be stale.
+projection values and their `asOfSeq` may be stale. The call reads every
+thread's storage entry, so it is the slowest read on a busy Host: make it once
+per task and reuse the result, since each prompt's header check adds one more.
 
 `workspace/follow` starts with `{type:"baseline",value:{items,archivedSessionIds}}`.
 Union the workspaces' `sessionIds` to obtain the owned set; subtract
@@ -156,6 +161,15 @@ separate from the transport `rpcId` minted by the client. Keep the prompt ID if
 you need to correlate a later turn. `{accepted:true}` acknowledges inbox
 admission, not a reply. `BAD_HEADER` means nothing was sent: fix line 1 to the
 printed line and send again with a fresh `requestId`.
+
+A failure whose message starts with `Nothing was sent.` happened before the
+prompt left: the header check reads `session/list` first, and a busy Host can
+take tens of seconds to answer it. Send the same call again. After
+`RESPONSE_TIMEOUT` or `CONNECTION_FAILED` without those words, the prompt may
+have arrived. Send the identical call again and keep its `requestId`: the Host
+admits a `requestId` once, so the message cannot arrive twice, while a fresh
+`requestId` can deliver a second copy. Pass the arguments with `--args-file` so
+a resend is the same request.
 
 Send with `mode: "steer"`, not `"queue"` (Zhuoran, Oct 7). Steer lands at the
 target's next step boundary, after any tool call in progress finishes; on an

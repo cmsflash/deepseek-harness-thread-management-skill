@@ -7,6 +7,7 @@ import { dirname, join } from 'node:path'
 
 const INPUT_LIMIT = 1024 * 1024
 const LOOPBACK = new Set(['127.0.0.1', 'localhost', '[::1]'])
+const DEFAULT_TIMEOUT_MS = 120_000
 
 export class RpcError extends Error {
   constructor(code, message, status) {
@@ -14,6 +15,18 @@ export class RpcError extends Error {
     this.code = code
     this.status = status
   }
+}
+
+export function defaultTimeoutMs(value = process.env.DSH_RPC_TIMEOUT_MS) {
+  return value === undefined || value === '' ? DEFAULT_TIMEOUT_MS : Number(value)
+}
+
+const timedOut = error => error?.name === 'TimeoutError' || error?.cause?.name === 'TimeoutError'
+
+function refused(error) {
+  const cause = error?.cause
+  return cause?.code === 'ECONNREFUSED'
+    || Boolean(cause?.errors?.length && cause.errors.every(item => item.code === 'ECONNREFUSED'))
 }
 
 function loopbackUrl(value) {
@@ -74,7 +87,7 @@ export function webSocketLibrary() {
 }
 
 export class RpcClient {
-  constructor({ baseUrl, authFile, timeoutMs = 30_000 } = {}) {
+  constructor({ baseUrl, authFile, timeoutMs = defaultTimeoutMs() } = {}) {
     this.origin = resolveOrigin(baseUrl)
     this.authFile = authFile || process.env.DSH_RPC_AUTH_FILE || join(
       homedir(), '.cache', 'dsh-thread-rpc',
@@ -91,6 +104,17 @@ export class RpcClient {
       if (secret) safe = safe.replaceAll(secret, '[REDACTED]')
     }
     return safe.replace(/([?&]token=)[^\s&#"<>]+/giu, '$1[REDACTED]')
+  }
+
+  transportError(error, what, { read = false } = {}) {
+    const tail = read ? '' : ' No retry was attempted.'
+    if (refused(error)) {
+      return new RpcError('CONNECTION_REFUSED', `Nothing is listening at ${this.origin}; ${what} was not sent.${tail}`)
+    }
+    if (timedOut(error)) {
+      return new RpcError('RESPONSE_TIMEOUT', `No complete response to ${what} within ${this.timeoutMs / 1000} s; the Host may be busy${read ? '' : ' and the outcome may be unknown'}.${tail}`)
+    }
+    return new RpcError('CONNECTION_FAILED', read ? `The connection for ${what} failed.` : `Delivery of ${what} failed; outcome may be unknown.${tail}`)
   }
 
   rememberCookie(cookie) {
@@ -207,8 +231,8 @@ export class RpcClient {
         headers: { 'content-type': 'application/json', cookie },
         body: JSON.stringify({ type: 'client-request', rpcId: randomUUID(), method: endpoint, payload: { args } }),
       })
-    } catch {
-      throw new RpcError('CONNECTION_FAILED', 'RPC delivery failed; outcome may be unknown. No retry was attempted.')
+    } catch (error) {
+      throw this.transportError(error, endpoint)
     }
     if (!response.ok) {
       await response.body?.cancel()
@@ -216,7 +240,8 @@ export class RpcClient {
         `RPC returned HTTP ${response.status}. No retry was attempted.`, response.status)
     }
     let envelope
-    try { envelope = await response.json() } catch {
+    try { envelope = await response.json() } catch (error) {
+      if (!(error instanceof SyntaxError)) throw this.transportError(error, endpoint)
       throw new RpcError('BAD_RESPONSE', 'RPC response was not JSON; outcome may be unknown. No retry was attempted.')
     }
     if (envelope?.result?.ok === false) {
@@ -235,8 +260,8 @@ export class RpcClient {
     let response
     try {
       response = await fetch(url, { headers: { cookie }, redirect: 'manual', signal: AbortSignal.timeout(this.timeoutMs) })
-    } catch {
-      throw new RpcError('CONNECTION_FAILED', 'Could not open the authenticated API download.')
+    } catch (error) {
+      throw this.transportError(error, 'the API download', { read: true })
     }
     if (!response.ok) {
       await response.body?.cancel()

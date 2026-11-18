@@ -9,11 +9,22 @@ function outgoing(endpoint, request) {
 
 const escape = text => text.replace(/[.*+?^${}()|[\]\\]/gu, '\\$&')
 
+async function listSessions(client) {
+  try { return await client.request('session/list', { _request: {} }) } catch (error) {
+    if (!(error instanceof RpcError)) throw error
+    const why = error.code === 'RESPONSE_TIMEOUT' ? `The header check got no complete session/list response within ${client.timeoutMs / 1000} s; the Host may be busy.`
+      : error.code === 'CONNECTION_REFUSED' ? `Nothing is listening at ${client.origin}.`
+      : error.code === 'CONNECTION_FAILED' ? 'The header check lost its connection while reading session/list.'
+      : error.message
+    throw new RpcError(error.code, `Nothing was sent. ${why}`, error.status)
+  }
+}
+
 export async function checkAgentHeader(client, endpoint, args, sourceId) {
   const message = outgoing(endpoint, args?.request)
   if (!message || !sourceId) return
   const [targetId, content] = message
-  const { items } = await client.request('session/list', { _request: {} })
+  const { items } = await listSessions(client)
   if (!items.some(item => item.sessionId === targetId)) {
     throw new RpcError('UNKNOWN_TARGET', `Nothing was sent. ${targetId} is not in this Host's session/list.`)
   }

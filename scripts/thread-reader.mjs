@@ -86,7 +86,12 @@ export async function committedCursor(client, sessionId, { maxDownloadBytes = 25
   let downloadedBytes = 0
   try {
     while (!decoder.complete) {
-      const { done, value } = await reader.read()
+      let chunk
+      try { chunk = await reader.read() } catch (error) {
+        if (error?.name !== 'TimeoutError') throw error
+        throw new RpcError('RESPONSE_TIMEOUT', 'The session export did not finish within the timeout; the Host may be busy. No partial result was accepted.')
+      }
+      const { done, value } = chunk
       if (done) { decoder.push(new Uint8Array(), true); break }
       downloadedBytes += value.length
       if (downloadedBytes > maxDownloadBytes) throw new RpcError('EXPORT_LIMIT', 'Session export exceeds the configured download limit.')

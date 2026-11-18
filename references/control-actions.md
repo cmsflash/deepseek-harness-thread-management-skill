@@ -80,8 +80,8 @@ restarted. Do not recreate a thread to get around a refusal.
 
 Repeating the same nest or clear is a no-op on the Host, which makes this
 call an exception to "inspect state rather than resending". After
-`CONNECTION_FAILED` (a timeout prints it too) or `BAD_RECEIPT`, send the
-same command once more; if that fails as well, carry on as after a refusal.
+`RESPONSE_TIMEOUT`, `CONNECTION_FAILED` or `BAD_RECEIPT`, send the same
+command once more; if that fails as well, carry on as after a refusal.
 Archiving either thread keeps the link.
 
 The raw call takes

@@ -6,7 +6,7 @@ import { createRequire } from 'node:module';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import test from 'node:test';
-import { RpcClient, RpcError, resolveOrigin } from '../scripts/rpc-client.mjs';
+import { RpcClient, RpcError, defaultTimeoutMs, resolveOrigin } from '../scripts/rpc-client.mjs';
 
 const { WebSocketServer } = createRequire(join(
   process.env.DSH_ROOT || '/Users/zhuoran/Programs/deepseek-harness',
@@ -471,6 +471,79 @@ test('an ambiguous write delivery is attempted once, never retried', { timeout: 
       return true;
     });
   assert.equal(env.requests.length, 1);
+});
+
+test('a request unanswered by the deadline is a typed timeout, attempted once', { timeout: 10_000 }, async (t) => {
+  for (const stage of ['no response', 'stalled body']) await t.test(stage, async (t) => {
+    const env = await authenticated(t, {
+      http: (_request, response) => {
+        if (stage === 'stalled body') response.writeHead(200, { 'content-type': 'application/json' }).write('{"result":');
+      },
+    });
+    await assert.rejects(clientFor(env, { timeoutMs: 150 }).request('session/prompt', { sessionId: 'fixture-session', message: 'once' }),
+      (error) => {
+        errorCode('RESPONSE_TIMEOUT')(error);
+        assert.match(error.message, /session\/prompt within 0\.15 s/u);
+        assert.match(error.message, /outcome may be unknown/u);
+        assert.match(error.message, /No retry/u);
+        return true;
+      });
+    assert.equal(env.requests.length, 1);
+  });
+});
+
+test('a response cut off mid-body is a failed delivery, not a malformed receipt', { timeout: 5_000 }, async (t) => {
+  const env = await authenticated(t, {
+    http: (_request, response, rawRequest) => {
+      response.writeHead(200, { 'content-type': 'application/json', 'content-length': '64' });
+      response.write('{"result":', () => rawRequest.socket.destroy());
+    },
+  });
+  await assert.rejects(env.client.request('session/prompt', { sessionId: 'fixture-session', message: 'once' }), (error) => {
+    errorCode('CONNECTION_FAILED')(error);
+    assert.match(error.message, /outcome may be unknown/u);
+    return true;
+  });
+  assert.equal(env.requests.length, 1);
+});
+
+test('a refused connection reports that nothing was sent', { timeout: 5_000 }, async (t) => {
+  const env = await authenticated(t);
+  await env.close();
+  await assert.rejects(env.client.request('session/prompt', { sessionId: 'fixture-session', message: 'once' }), (error) => {
+    errorCode('CONNECTION_REFUSED')(error);
+    assert.match(error.message, /session\/prompt was not sent/u);
+    assert.doesNotMatch(error.message, /unknown/u);
+    return true;
+  });
+  await assert.rejects(env.client.openDownload('/api/session.export?sessionId=fixture'), errorCode('CONNECTION_REFUSED'));
+});
+
+test('a download that does not start by the deadline is a typed timeout', { timeout: 5_000 }, async (t) => {
+  const env = await authenticated(t, { http: () => {} });
+  await assert.rejects(clientFor(env, { timeoutMs: 150 }).openDownload('/api/session.export?sessionId=fixture'), (error) => {
+    errorCode('RESPONSE_TIMEOUT')(error);
+    assert.doesNotMatch(error.message, /unknown|No retry/u);
+    return true;
+  });
+});
+
+test('the default deadline is two minutes unless DSH_RPC_TIMEOUT_MS or the caller sets one', (t) => {
+  const saved = process.env.DSH_RPC_TIMEOUT_MS;
+  t.after(() => {
+    if (saved === undefined) delete process.env.DSH_RPC_TIMEOUT_MS;
+    else process.env.DSH_RPC_TIMEOUT_MS = saved;
+  });
+  delete process.env.DSH_RPC_TIMEOUT_MS;
+  assert.equal(defaultTimeoutMs(), 120_000);
+  assert.equal(new RpcClient({ baseUrl: 'http://127.0.0.1:8216' }).timeoutMs, 120_000);
+  assert.equal(new RpcClient({ baseUrl: 'http://127.0.0.1:8216', timeoutMs: 5_000 }).timeoutMs, 5_000);
+  process.env.DSH_RPC_TIMEOUT_MS = '45000';
+  assert.equal(new RpcClient({ baseUrl: 'http://127.0.0.1:8216' }).timeoutMs, 45_000);
+  process.env.DSH_RPC_TIMEOUT_MS = '';
+  assert.equal(defaultTimeoutMs(), 120_000);
+  process.env.DSH_RPC_TIMEOUT_MS = 'soon';
+  assert.throws(() => new RpcClient({ baseUrl: 'http://127.0.0.1:8216' }), errorCode('BAD_TIMEOUT'));
 });
 
 test('RPC application errors preserve their code and redact active credentials', { timeout: 5_000 }, async (t) => {

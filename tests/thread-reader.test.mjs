@@ -410,6 +410,7 @@ test('committedCursor cancels on bad exports, decoded limits, and transport read
     ['decoded byte limit', [value], { maxLogBytes: 32 }, 'EXPORT_LIMIT'],
     ['line byte limit', [value], { maxLineBytes: 128 }, 'EXPORT_LIMIT'],
     ['read error', [value.subarray(0, 12), readError], {}, null],
+    ['read timeout', [value.subarray(0, 12), new DOMException('The operation was aborted due to timeout', 'TimeoutError')], {}, 'RESPONSE_TIMEOUT'],
   ]) await t.test(name, async () => {
     const download = downloadFixture(chunks);
     const fixture = clientFixture({ download });

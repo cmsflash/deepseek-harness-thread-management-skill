@@ -64,6 +64,12 @@ python3 scripts/count-active-sessions.py
 python3 scripts/count-active-sessions.py --json
 ```
 
+- A call waits up to 120 s for its response (`--timeout-ms`, or
+  `DSH_RPC_TIMEOUT_MS`), since a busy Host can take tens of seconds to answer
+  `session/list`. A missed deadline prints `RESPONSE_TIMEOUT`, a refused
+  connection `CONNECTION_REFUSED`, and a failure of the header check says
+  `Nothing was sent.` After an unknown outcome, `session/prompt` can be sent
+  again with the same `requestId`: the Host admits each one once.
 - The reply reader scans the first root JSONL entry of an authenticated session
   export to establish the exact committed cursor, title, and interaction times.
   It cancels the download before bulk attachments, then reads a small collapsed

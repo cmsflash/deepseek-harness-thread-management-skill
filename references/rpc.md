@@ -67,7 +67,8 @@ expired cookie requires a fresh approved login.
 
 No request is automatically replayed after a timeout, authentication error, or
 other failure. A lost write receipt is an unknown outcome: inspect state before
-considering another explicitly authorized action.
+considering another explicitly authorized action. `session/prompt` may be sent
+again as it was, because the Host admits each `requestId` once.
 
 ## Unary requests
 
@@ -110,6 +111,23 @@ covered in [Control actions](control-actions.md). Call
 value is every parent link on the Host, and a Host without the endpoint
 answers HTTP 404, which `rpc.mjs call` reports as
 `HTTP_ERROR: RPC returned HTTP 404. No retry was attempted.`
+
+Each call and download has one deadline for its whole response: 120 s unless
+`--timeout-ms` or `DSH_RPC_TIMEOUT_MS` sets another. A busy Host can take tens
+of seconds to answer `session/list`, which reads every thread's storage entry.
+A failed call prints one of these codes and exits 1:
+
+| Code | Meaning | Next step |
+|---|---|---|
+| `CONNECTION_REFUSED` | Nothing listens at the origin. The request was not sent. | Check the origin; the Host may be restarting. |
+| `RESPONSE_TIMEOUT` | No complete response arrived by the deadline. A write may have been applied. | Repeat a read, with a longer deadline while the Host is busy. For a write, inspect state; resend `session/prompt` with the same `requestId`. |
+| `CONNECTION_FAILED` | The connection dropped before a complete response. A write may have been applied. | As for `RESPONSE_TIMEOUT`. |
+| `HTTP_ERROR` | The Host answered with an error status; 404 means it has no such endpoint. | Check the endpoint name and arguments. |
+| `AUTH_REQUIRED` | No usable cached login, or the Host answered 401. | Log in again with approved launch output. |
+| `BAD_RESPONSE` | The response was not an RPC receipt. | Treat a write's outcome as unknown. |
+
+A message that starts with `Nothing was sent.` comes from the header check
+before a prompt or queue edit, whatever its code: the write never left.
 
 The client returns `result.value` or fails with the RPC error code. The CLI
 prints `null` for an absent value. For `commands/execute`, an undefined value
