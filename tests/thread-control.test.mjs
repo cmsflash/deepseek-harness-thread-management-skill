@@ -110,7 +110,7 @@ async function fixture(t, options = {}) {
             else send(ready)
           } else if (frame.endpoint === 'workspace/follow' && options.workspace) {
             assert.deepEqual(frame.payload, { args: {} })
-            send({ type: 'baseline', value: options.workspace })
+            send({ type: 'baseline', value: typeof options.workspace === 'function' ? options.workspace() : options.workspace })
           } else throw new Error(`unexpected stream: ${frame.endpoint}`)
         } catch (error) {
           failures.push(error)
@@ -707,6 +707,221 @@ test('an untitled thread may be named by any non-empty text, with its session ID
     if (!sent) assert.ok(result.stderr.includes(`-> <target title> (${sessionId})]`), result.stderr)
     assert.equal(urls.length, sent ? 2 : 1)
   })
+})
+
+const attachmentBaseline = (detachedSessionIds = [], parent = sourceId) => ({
+  items: [{ workspaceId: 'fixture-workspace', sessionIds: [sessionId, sourceId] }],
+  sessionParents: parent === null ? {} : { [sessionId]: parent },
+  archivedSessionIds: [],
+  ...(detachedSessionIds === null ? {} : { detachedSessionIds }),
+})
+const setAttachment = (env, args = ['--detach'], extraEnv = {}) => run(env, 'set-attachment.mjs',
+  [sessionId, '--parent', sourceId, ...args], extraEnv)
+
+async function attachmentFixture(t, { before = attachmentBaseline(), after, rpc } = {}) {
+  let state = before
+  let wrote = false
+  return fixture(t, { workspace: () => wrote && after !== undefined ? after : state, rpc(envelope, response) {
+    wrote = true
+    assert.equal(envelope.method, 'workspace/setSessionAttachment')
+    const request = envelope.payload.args.request
+    assert.deepEqual(Object.keys(request).sort(), ['attachment', 'parentSessionId', 'sessionId'])
+    assert.equal(request.sessionId, sessionId)
+    assert.equal(request.parentSessionId, sourceId)
+    if (rpc) return rpc(envelope, response)
+    state = attachmentBaseline(request.attachment === 'detached' ? [sessionId, 'session-other-detached'] : ['session-other-detached'])
+    json(response, { detachedSessionIds: state.detachedSessionIds })
+  } })
+}
+
+test('set-attachment verifies explicit detach and attach, with bounded target-only receipts', { timeout: 20_000 }, async t => {
+  for (const attachment of ['detached', 'attached']) await t.test(attachment, async t => {
+    const env = await attachmentFixture(t, { before: attachmentBaseline(attachment === 'attached' ? [sessionId] : []) })
+    const result = await setAttachment(env, [attachment === 'detached' ? '--detach' : '--attach'],
+      { DSH_WEB_URL: 'http://127.0.0.1:1', DSH_RPC_AUTH_FILE: '/nonexistent/fixture-auth', DSH_SESSION_ID: 'session-not-the-parent' })
+    assert.deepEqual(report(result), { action: 'set-attachment', sessionId, parentSessionId: sourceId,
+      attachment, origin: env.origin, status: attachment, writeAttempted: true, verification: 'receipt-and-baseline',
+      observed: { owned: true, parentSessionId: sourceId, attachment } })
+    assert.ok(!result.stdout.includes('session-other-detached'))
+    assert.equal(env.requests.length, 1)
+    assert.deepEqual(env.opens.map(frame => frame.endpoint), ['workspace/follow', 'workspace/follow'])
+  })
+})
+
+test('set-attachment requires an explicit parent and a single action before any network call', { timeout: 20_000 }, async t => {
+  const env = await attachmentFixture(t)
+  for (const args of [[], [sessionId, '--detach'], [sessionId, '--parent', sourceId],
+    [sessionId, '--parent', sourceId, '--attach', '--detach'], [sessionId, '--parent', '', '--detach'],
+    [sessionId, '--parent', sessionId, '--detach'], [sessionId, '--parent', sourceId, '--clear'],
+    [sessionId, '--parent', sourceId, '--detach', '--timeout-ms', 'NaN']]) {
+    const result = await run(env, 'set-attachment.mjs', args, { DSH_SESSION_ID: sourceId })
+    assert.equal(result.code, 5)
+    assert.equal(JSON.parse(result.stdout).writeAttempted, false)
+  }
+  assert.deepEqual(env.requests, [])
+  assert.deepEqual(env.opens, [])
+})
+
+test('set-attachment refuses missing, unparented, and reparented targets without writing', { timeout: 20_000 }, async t => {
+  for (const before of [attachmentBaseline([], null), attachmentBaseline([], 'session-new-parent'),
+    { ...attachmentBaseline(), items: [] }]) {
+    const env = await attachmentFixture(t, { before })
+    const result = await setAttachment(env)
+    assert.equal(result.code, 1)
+    assert.equal(JSON.parse(result.stdout).code, 'PARENT_MISMATCH')
+    assert.equal(JSON.parse(result.stdout).writeAttempted, false)
+    assert.deepEqual(env.requests, [])
+  }
+})
+
+test('set-attachment allows archived Reports and never mutates descendants or parent links', { timeout: 10_000 }, async t => {
+  const env = await attachmentFixture(t, { before: { ...attachmentBaseline(), archivedSessionIds: [sessionId],
+    sessionParents: { [sessionId]: sourceId, 'session-nested-report': sessionId } } })
+  assert.equal(report(await setAttachment(env)).status, 'detached')
+  assert.deepEqual(env.requests.map(request => request.url), ['/api/workspace/setSessionAttachment'])
+})
+
+test('set-attachment treats only endpoint absence with missing marker support as unsupported', { timeout: 20_000 }, async t => {
+  for (const legacy of [true, false]) {
+    const env = await attachmentFixture(t, { before: attachmentBaseline(legacy ? null : []),
+      rpc: (envelope, response) => response.writeHead(404).end('not found') })
+    const result = await setAttachment(env)
+    assert.equal(result.code, legacy ? 0 : 1)
+    assert.equal(JSON.parse(result.stdout).status, legacy ? 'unsupported' : 'unknown')
+    assert.equal(JSON.parse(result.stdout).writeAttempted, true)
+    assert.equal(env.requests.length, 1)
+    assert.equal(env.opens.length, legacy ? 1 : 2)
+  }
+})
+
+test('set-attachment reports auth and semantic refusals, never unsupported or a retry', { timeout: 20_000 }, async t => {
+  for (const code of ['session/not-found', 'workspace/session-parent-mismatch', 'workspace/session-attachment-invalid', 'gateway/internal', 401, 403]) {
+    const env = await attachmentFixture(t, { rpc(envelope, response) {
+      if (typeof code === 'number') response.writeHead(code).end()
+      else response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+        result: { ok: false, error: { code, message: 'synthetic refusal' } },
+      }))
+    } })
+    const result = await setAttachment(env)
+    assert.equal(result.code, 1)
+    const receipt = JSON.parse(result.stdout)
+    assert.equal(receipt.status, code === 'gateway/internal' ? 'unknown' : 'refused')
+    assert.equal(receipt.writeAttempted, true)
+    assert.equal(receipt.code ?? receipt.writeError.code, typeof code === 'number' ? code === 401 ? 'AUTH_REQUIRED' : 'HTTP_ERROR' : code)
+    assert.equal(env.requests.length, 1)
+    assert.equal(env.opens.length, code === 'gateway/internal' ? 2 : 1)
+  }
+})
+
+test('set-attachment reconciles lost write receipts without replaying mutations', { timeout: 20_000 }, async t => {
+  for (const kind of ['disconnect', 'timeout', 'malformed', 'wrong-marker', 'wrong-list']) await t.test(kind, async t => {
+    const env = await attachmentFixture(t, { after: attachmentBaseline([sessionId]), rpc(envelope, response) {
+      if (kind === 'disconnect') response.destroy()
+      else if (kind === 'timeout') return
+      else if (kind === 'malformed') response.writeHead(200).end('not JSON')
+      else json(response, { detachedSessionIds: kind === 'wrong-list' ? [7] : [] })
+    } })
+    const receipt = report(await setAttachment(env, ['--detach', '--timeout-ms', '500']))
+    assert.equal(receipt.status, 'detached')
+    assert.equal(receipt.verification, 'reconciled')
+    assert.ok(receipt.writeError)
+    assert.equal(env.requests.length, 1)
+    assert.equal(env.opens.length, 2)
+  })
+})
+
+test('set-attachment reconciles malformed wire error codes once without replaying the write', { timeout: 20_000 }, async t => {
+  for (const code of [42, {}]) {
+    for (const [outcome, after] of [
+      ['matched', attachmentBaseline([sessionId])], ['stale', attachmentBaseline()], ['unreadable', { items: [] }],
+    ]) await t.test(`${JSON.stringify(code)}: ${outcome}`, async t => {
+      const env = await attachmentFixture(t, { after, rpc(envelope, response) {
+        response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+          result: { ok: false, error: { code, message: 'malformed wire error' } },
+        }))
+      } })
+      const result = await setAttachment(env)
+      assert.equal(result.stderr, '')
+      const receipt = JSON.parse(result.stdout)
+      assert.equal(receipt.writeAttempted, true)
+      assert.equal(result.code, outcome === 'matched' ? 0 : 1)
+      assert.equal(receipt.status, outcome === 'matched' ? 'detached' : 'unknown')
+      assert.deepEqual(receipt.writeError, { code, message: 'malformed wire error' })
+      if (outcome === 'matched') {
+        assert.equal(receipt.verification, 'reconciled')
+        assert.deepEqual(receipt.observed, { owned: true, parentSessionId: sourceId, attachment: 'detached' })
+      } else {
+        assert.equal(receipt.verification, undefined)
+        assert.match(receipt.message, /No retry was attempted/)
+        if (outcome === 'stale') assert.equal(receipt.observed.attachment, 'attached')
+        else assert.equal(receipt.observationError.code, 'BAD_BASELINE')
+      }
+      assert.deepEqual(env.requests.map(request => request.url), ['/api/workspace/setSessionAttachment'])
+      assert.deepEqual(env.opens.map(frame => frame.endpoint), ['workspace/follow', 'workspace/follow'])
+    })
+  }
+})
+
+test('set-attachment reconciles unexpected wire decoding failures but does not hide the defect', { timeout: 10_000 }, async t => {
+  const env = await attachmentFixture(t, { after: attachmentBaseline([sessionId]), rpc(envelope, response) {
+    response.writeHead(200, { 'content-type': 'application/json' }).end(JSON.stringify({
+      result: { ok: false, error: { code: 42, message: { toString: null } } },
+    }))
+  } })
+  const result = await setAttachment(env)
+  assert.equal(result.code, 1)
+  assert.equal(result.stderr, '')
+  const receipt = JSON.parse(result.stdout)
+  assert.equal(receipt.status, 'unknown')
+  assert.equal(receipt.writeAttempted, true)
+  assert.equal(receipt.writeError.code, 'UNEXPECTED_ERROR')
+  assert.deepEqual(receipt.observed, { owned: true, parentSessionId: sourceId, attachment: 'detached' })
+  assert.deepEqual(env.requests.map(request => request.url), ['/api/workspace/setSessionAttachment'])
+  assert.deepEqual(env.opens.map(frame => frame.endpoint), ['workspace/follow', 'workspace/follow'])
+})
+
+test('set-attachment retains its write attempt and readback after an unexpected receipt reporting failure', { timeout: 10_000 }, async t => {
+  const env = await attachmentFixture(t)
+  const failOnce = `const log = console.log; let failed = false; console.log = (...args) => {
+    if (!failed) { failed = true; throw new Error('synthetic receipt output failure') }
+    log(...args)
+  }`
+  const result = await setAttachment(env, ['--detach'], {
+    NODE_OPTIONS: `--import=data:text/javascript,${encodeURIComponent(failOnce)}`,
+  })
+  assert.equal(result.code, 1)
+  assert.equal(result.stderr, '')
+  const receipt = JSON.parse(result.stdout)
+  assert.equal(receipt.status, 'unknown')
+  assert.equal(receipt.writeAttempted, true)
+  assert.equal(receipt.writeError.code, 'UNEXPECTED_ERROR')
+  assert.deepEqual(receipt.observed, { owned: true, parentSessionId: sourceId, attachment: 'detached' })
+  assert.deepEqual(env.requests.map(request => request.url), ['/api/workspace/setSessionAttachment'])
+  assert.deepEqual(env.opens.map(frame => frame.endpoint), ['workspace/follow', 'workspace/follow'])
+})
+
+test('set-attachment leaves failed readback, stale marker, and changed parent outcomes unknown', { timeout: 20_000 }, async t => {
+  for (const after of [attachmentBaseline(), attachmentBaseline([sessionId], 'session-new-parent'),
+    attachmentBaseline([sessionId], null), attachmentBaseline(null), { items: [] }]) {
+    const env = await attachmentFixture(t, { after })
+    const result = await setAttachment(env)
+    assert.equal(result.code, 1)
+    const receipt = JSON.parse(result.stdout)
+    assert.equal(receipt.status, 'unknown')
+    assert.match(receipt.message, /Reconcile.*before any retry/)
+    assert.equal(env.requests.length, 1)
+  }
+})
+
+test('set-attachment rejects malformed baseline fields before writing', { timeout: 20_000 }, async t => {
+  for (const before of [{ items: [] }, { ...attachmentBaseline(), detachedSessionIds: 'not-an-array' },
+    { ...attachmentBaseline(), sessionParents: [] }, { ...attachmentBaseline(), items: [{}] }]) {
+    const env = await attachmentFixture(t, { before })
+    const result = await setAttachment(env)
+    assert.equal(result.code, 1)
+    assert.equal(JSON.parse(result.stdout).code, 'BAD_BASELINE')
+    assert.deepEqual(env.requests, [])
+  }
 })
 
 const parentOf = (t, { reply, status = 200, text } = {}) => fixture(t, { rpc(envelope, response) {

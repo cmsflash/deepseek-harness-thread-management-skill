@@ -1,6 +1,6 @@
 ---
 name: deepseek-harness-thread-management
-description: "Read, prompt, control, count, recover, and wait on other DeepSeek Harness (DSH) threads through the authenticated local Host API and workspace registry. Use for another thread's latest reply, sending or steering a message, cancelling, renaming, nesting, forking, archiving or restoring a thread, running a slash command, explicitly authorized approval/question responses, session counts, or waiting for a running turn. Triggers include 'what did that thread say', 'tell it to', 'stop the other agent', 'unarchive', 'restore an archived thread', 'how many sessions', and 'wait for that thread'. Messages to other DSH threads need no approval; other writes need the human's request or approval."
+description: "Read, prompt, control, count, recover, and wait on other DeepSeek Harness (DSH) threads through the authenticated local Host API and workspace registry. Use for another thread's latest reply, sending or steering a message, cancelling, renaming, nesting, attaching or detaching a Report, forking, archiving or restoring a thread, running a slash command, explicitly authorized approval/question responses, session counts, or waiting for a running turn. Triggers include 'what did that thread say', 'tell it to', 'stop the other agent', 'unarchive', 'restore an archived thread', 'how many sessions', and 'wait for that thread'. Messages to other DSH threads need no approval; other writes need the human's request or approval."
 ---
 
 # Manage DSH threads
@@ -60,9 +60,9 @@ logs.
 
 - [Authenticated RPC](references/rpc.md): login, origin selection, wire shapes,
   dependencies, and failure handling. Read before using the Host API.
-- [Control actions](references/control-actions.md): lifecycle, nesting a thread
-  under another, queue, commands, pending approvals/questions, and
-  parent-addressed subagents.
+- [Control actions](references/control-actions.md): lifecycle, nesting, Report
+  attachment markers with `set-attachment.mjs`, queue, commands, pending
+  approvals/questions, and parent-addressed subagents.
 - [Restoring archived threads](references/unarchive.md): native restore and
   dry-run recovery helpers.
 - [Counting sessions](references/counting.md): ownership, archive filtering,
@@ -93,7 +93,16 @@ projection values and their `asOfSeq` may be stale. The call reads every
 thread's storage entry, so it is the slowest read on a busy Host: make it once
 per task and reuse the result, since each prompt's header check adds one more.
 
-`workspace/follow` starts with `{type:"baseline",value:{items,archivedSessionIds}}`.
+`workspace/follow` starts with `{type:"baseline",value:{items,archivedSessionIds,sessionParents,detachedSessionIds}}`.
+`sessionParents` maps child IDs to parents; `detachedSessionIds` lists detached
+Reports. A linked, unmarked Report is attached; an unparented Peer has no
+attachment marker. Missing `detachedSessionIds` means the Host does not expose
+marker state, not that every Report is attached. Change a marker only on the
+human's instruction through the Manager, with the separate steering message and
+registry update required by `thread-organization`. The person icon before a
+detached title, with tooltip `Detached: reports to you`, is an indicator, not a
+toggle. Read [Report attachment](references/control-actions.md#report-attachment)
+before writing; workspace membership `detachSession` is unrelated.
 Union the workspaces' `sessionIds` to obtain the owned set; subtract
 `archivedSessionIds` for active workspace threads. Keep blank entries unless the
 question explicitly excludes them. Active here means visible by ownership and

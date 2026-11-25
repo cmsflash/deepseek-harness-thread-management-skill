@@ -37,7 +37,7 @@ workspace/setSessionParent; nothing changed). A Host refusal prints its code and
     } else {
       const links = receipt?.sessionParents
       if (typeof links !== 'object' || links === null || (links[sessionId] ?? null) !== parentSessionId) {
-        throw new RpcError('BAD_RECEIPT', 'The parent receipt does not confirm the requested outcome. Repeating the same call is safe.')
+        throw new RpcError('BAD_RECEIPT', 'The parent receipt does not confirm the requested outcome; the write outcome is unknown. Read a fresh workspace/follow baseline for the current parent and attachment marker, and check the current human instruction. If already desired, do not resend; do not overwrite a newer relationship automatically. Only an explicit fresh authorized action may issue another write; this call has no expected-parent check.')
       }
       print(parentSessionId === null ? { status: 'cleared', sessionId } : { status: 'nested', sessionId, parentSessionId })
     }

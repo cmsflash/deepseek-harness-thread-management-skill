@@ -2,7 +2,7 @@
 
 An agent skill for reading and managing DeepSeek Harness (DSH) threads through
 its authenticated local Host API. It covers thread discovery, bounded reply
-reads, prompting, lifecycle changes, nesting, pending interactions, session
+reads, prompting, lifecycle changes, nesting, Report attachment, pending interactions, session
 counts, and waiting for a running turn to end.
 
 **Send what the human asks for.** When the human asks you to message a thread,
@@ -59,6 +59,8 @@ node scripts/unarchive.mjs restore session-xxxx
 
 node scripts/set-parent.mjs session-xxxx
 node scripts/set-parent.mjs session-xxxx --clear
+node scripts/set-attachment.mjs session-report --parent session-manager --detach
+node scripts/set-attachment.mjs session-report --parent session-manager --attach
 
 python3 scripts/count-active-sessions.py
 python3 scripts/count-active-sessions.py --json
@@ -92,6 +94,14 @@ python3 scripts/count-active-sessions.py --json
   calling thread. The helper prints one line instead of the Host's complete
   parent map, and reports a Host without the endpoint as `unsupported`
   instead of failing. See [Control actions](references/control-actions.md).
+- Report attachment uses `set-attachment.mjs` with an explicit expected parent
+  and exactly `--attach` or `--detach`, only on the human's instruction through
+  the Manager. It verifies marker and parent, and reconciles unknown outcomes
+  without replaying writes. Its JSON receipt distinguishes unsupported, refused,
+  unknown, and confirmed state. This does not send the required steering message
+  or update the behavioral registry. The person icon before a detached title
+  (`Detached: reports to you`) is not a toggle; workspace membership
+  `detachSession` is unrelated. See [Report attachment](references/control-actions.md#report-attachment).
 - Counts use workspace ownership minus the archive set, including blank
   sessions. That is neither a running-turn count nor an exact sidebar render
   count. Use [Counting sessions](references/counting.md) for the live baseline
@@ -131,6 +141,7 @@ ln -s ~/.agents/skills/deepseek-harness-thread-management ~/.claude/skills/deeps
 | [respond.mjs](scripts/respond.mjs) | Bounded pending-event observation and explicitly authorized responses |
 | [unarchive.mjs](scripts/unarchive.mjs) | Recovery preview and native lifecycle writes |
 | [set-parent.mjs](scripts/set-parent.mjs) | Nest a thread under another, or clear its parent |
+| [set-attachment.mjs](scripts/set-attachment.mjs) | Verify and sync an authorized Report attachment marker with expected-parent protection |
 | [count-active-sessions.py](scripts/count-active-sessions.py) | Counts from the local workspace registry |
 
 ## Validation

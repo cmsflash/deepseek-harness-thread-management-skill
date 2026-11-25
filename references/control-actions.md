@@ -78,11 +78,19 @@ not nested, with the exact line. After `unsupported`, skip further nesting
 calls in that turn: a Host gains the endpoint only when it is upgraded and
 restarted. Do not recreate a thread to get around a refusal.
 
-Repeating the same nest or clear is a no-op on the Host, which makes this
-call an exception to "inspect state rather than resending". After
-`RESPONSE_TIMEOUT`, `CONNECTION_FAILED` or `BAD_RECEIPT`, send the same
-command once more; if that fails as well, carry on as after a refusal.
-Archiving either thread keeps the link.
+After `RESPONSE_TIMEOUT`, `CONNECTION_FAILED` or `BAD_RECEIPT`, the write
+outcome is unknown; do not resend automatically. Read a fresh `workspace/follow`
+baseline for the current parent and attachment marker, and check the current
+human instruction. If the desired parent state is already present, do not resend.
+If the relationship or instruction changed, do not overwrite the newer state.
+Only an explicit fresh authorized action may issue another write. This call has
+no expected-parent check: a read does not guard a later write against concurrent
+reparenting, clearing or detachment. If state cannot be confirmed, stop nesting
+attempts, continue the task, and report the unknown outcome.
+
+Archiving either thread keeps the link and attachment marker. Reparenting
+preserves detachment; clearing the parent removes the marker. Neither action
+changes descendants' markers. A clear is therefore not a way to attach a Report.
 
 The raw call takes
 `{"request":{"sessionId":"<child>","parentSessionId":"<parent>"}}`, with
@@ -90,6 +98,64 @@ The raw call takes
 that map out of your context. To read the links, take `value.sessionParents`
 (child ID to parent ID) from the `workspace/follow` baseline. A Host without
 the endpoint omits that key.
+
+## Report attachment
+
+Only a human instruction authorizes the Manager to attach or detach a Report.
+This changes the native marker, not the parent or the Report's instructions.
+Send the separate steering message and update the behavioral registry as
+`thread-organization` requires. Marker success does not mean a message was
+delivered; message admission does not mean marker sync succeeded. The person
+icon before a detached title has tooltip `Detached: reports to you`; it is not
+a toggle. Never use workspace membership `detachSession` for Report detachment.
+
+```sh
+node scripts/set-attachment.mjs session-report --parent session-manager --detach
+node scripts/set-attachment.mjs session-report --parent session-manager --attach
+```
+
+Both actions require an explicit expected current parent, with no ambient
+`DSH_SESSION_ID` fallback. The helper reads workspace ownership and parent links
+before writing; the Host checks the same expected parent atomically with the
+write and refuses a mismatch. It never reparents a target to make the action fit.
+Select origin/auth with `--base-url` and `--auth-file`; `--timeout-ms` bounds each
+call. The raw call is:
+
+```json
+{"request":{"sessionId":"session-report","parentSessionId":"session-manager","attachment":"detached"}}
+```
+
+`workspace/setSessionAttachment` returns `{detachedSessionIds}`. The helper
+validates the list and requested membership, then reads a fresh
+`workspace/follow` baseline to confirm both the exact parent and marker. A
+linked, unmarked Report is attached. An unparented Peer has no attachment state.
+Reparenting preserves detachment; clearing the parent removes its flag; archive
+and restore retain it. These operations never cascade to descendants.
+
+The helper prints one JSON receipt with `action`, target IDs, requested
+`attachment`, selected `origin`, `status`, and `writeAttempted`. It omits other
+threads' IDs. Interpret `status`, not just the exit code:
+
+| Status | Evidence and next action |
+|---|---|
+| `attached` / `detached` | Exact parent and marker confirmed by baseline. `verification` is `receipt-and-baseline` or `reconciled`; the latter includes `writeError` and confirms observed state, not which request caused it. |
+| `unsupported` | Endpoint HTTP 404 **and** a valid workspace baseline without `detachedSessionIds`. Keep the human's instruction; record marker sync as unsupported and report the mismatch. |
+| `refused` | Invalid selection, preflight failure, auth failure, or semantic refusal; inspect `code` and `writeAttempted`. Do not change the target or parent to bypass it. |
+| `unknown` | Write outcome or current parent/marker could not be confirmed. Includes `observed`, `observationError`, or `writeError` as available. Reconcile before any retry. |
+
+Exit 0 means a verified marker or `unsupported`; exit 1 means `refused` or
+`unknown`; exit 5 means invalid arguments. A missing session, parent mismatch,
+HTTP 401/403/500, malformed response, or unavailable backend is not evidence of
+an absent endpoint. Even a 404 is a failure when the Host exposes marker state.
+
+No write is retried automatically. A timeout, disconnect, or invalid receipt
+triggers one fresh baseline read, not another mutation. If the requested state
+is observed, retain that receipt; otherwise stop and record the mismatch.
+A pending write may settle after a readback: inspect fresh state and current
+human instruction before retrying, especially after a transfer or handback.
+Do not edit Host storage, start a migration, reverse the human's instruction,
+or treat a stale icon as authority. Keep message admission, observed behavior,
+and marker sync separately visible in the registry until reconciled.
 
 ## Cancel a turn
 
